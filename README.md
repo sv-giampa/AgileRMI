@@ -1,5 +1,5 @@
 # CoarseRMI
-A simple Java library that implements a coarse Remote Method Invocation
+A simple Java library that implements a coarse Remote Method Invocation.
 
 This is a Java library useful to create network applications, without socket programming, by
 simply defining the business interfaces of the objects that you want to export on the network.
