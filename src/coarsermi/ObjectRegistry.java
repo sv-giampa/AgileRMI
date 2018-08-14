@@ -174,7 +174,7 @@ public class ObjectRegistry {
 	/**
 	 * Marks an interface to automatically create remote references for objects that
 	 * are sent as arguments for an invocation or as return values. The objects are
-	 * automatically publish on this registry when the related parameter of the stub
+	 * automatically published on this registry when the related parameter of the stub
 	 * method has a type that matches with the marked interface
 	 * 
 	 * @param remoteIf the interface to mark

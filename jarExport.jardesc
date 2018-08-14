@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="WINDOWS-1252" standalone="no"?>
+<jardesc>
+    <jar path="CoarseRMI - Library/jar/CoarseRMI-v1.0.0.jar"/>
+    <options buildIfNeeded="true" compress="true" descriptionLocation="/CoarseRMI - Library/jarExport.jardesc" exportErrors="true" exportWarnings="true" includeDirectoryEntries="false" overwrite="true" saveDescription="true" storeRefactorings="false" useSourceFolders="false"/>
+    <storedRefactorings deprecationInfo="true" structuralOnly="false"/>
+    <selectedProjects/>
+    <manifest generateManifest="true" manifestLocation="" manifestVersion="1.0" reuseManifest="false" saveManifest="false" usesManifest="true">
+        <sealing sealJar="false">
+            <packagesToSeal/>
+            <packagesToUnSeal/>
+        </sealing>
+    </manifest>
+    <selectedElements exportClassFiles="false" exportJavaFiles="true" exportOutputFolder="true">
+        <javaElement handleIdentifier="=CoarseRMI - Library/src"/>
+        <file path="/CoarseRMI - Library/README.md"/>
+        <folder path="/CoarseRMI - Library/docs"/>
+        <file path="/CoarseRMI - Library/LICENSE"/>
+        <file path="/CoarseRMI - Library/NOTICE.txt"/>
+    </selectedElements>
+</jardesc>

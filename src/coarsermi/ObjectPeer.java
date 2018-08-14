@@ -129,14 +129,14 @@ public class ObjectPeer {
 	}
 
 	/**
-	 * Gets a stub for the specified interface, representing a remote object on the
-	 * object server
+	 * Gets a stub for the specified object identifier respect to the specified
+	 * interface, representing a remote object on the object server
 	 * 
 	 * @param objectId      the object identifier
 	 * @param stubInterface the interface whose methods must be stubbed, that is the
 	 *                      interface used to access the remote object operations
-	 * @return A proxy object that represents the remote instance. It is an instance
-	 *         for the specified stub interface
+	 * @return A dynamic proxy object that represents the remote instance. It is an
+	 *         instance for the specified stub interface
 	 */
 	@SuppressWarnings("unchecked")
 	public <T> T getStub(String objectId, Class<T> stubInterface) {
@@ -178,6 +178,7 @@ public class ObjectPeer {
 	public void dispose() {
 		if (disposed)
 			return;
+		
 		disposed = true;
 		receiver.interrupt();
 		sender.interrupt();
@@ -189,6 +190,7 @@ public class ObjectPeer {
 			e.printStackTrace();
 		}
 
+		// let the stubs to return
 		for (StubInvocation invocation : invocations.values()) {
 			synchronized (invocation) {
 				invocation.returned = true;
@@ -201,7 +203,6 @@ public class ObjectPeer {
 		in = null;
 		invocations = null;
 		invokeQueue = null;
-		// stubFlyweight = null;
 	}
 
 	/**
@@ -232,10 +233,6 @@ public class ObjectPeer {
 	 */
 	void putInvocation(StubInvocation invocation) throws InterruptedException {
 		invokeQueue.put(invocation);
-	}
-
-	void removeInvocation(StubInvocation invocation) throws InterruptedException {
-		invokeQueue.remove(invocation);
 	}
 
 	/**
@@ -319,10 +316,11 @@ public class ObjectPeer {
 					// distinguish between remote references and serializable objects
 					if (id != null) {
 						out.writeBoolean(true); // it is a remote reference
-						out.writeUnshared(id);
+						out.writeUnshared(id); // write the object id only on the stream
 					} else {
 						out.writeBoolean(false); // it is not a remote reference
-						out.writeUnshared(arg);
+						out.writeUnshared(arg); // serialize the object to the stream (throws a NotSerializableException
+												// if the argument is not serializable)
 					}
 
 					// sendArg(arg, parameterTypes[i]); // send the current argument
@@ -416,8 +414,6 @@ public class ObjectPeer {
 							try {
 								// retrieve the object
 								Object object = registry.getObject(objectId);
-								
-								System.out.println("[ObjectPeer.receiver] invocation start: " + objectId + "." + methodName);
 
 								// find the correct method
 								Method method = object.getClass().getMethod(methodName, parameterTypes);
@@ -428,13 +424,8 @@ public class ObjectPeer {
 								// set invocation return class
 								invocation.returnClass = method.getReturnType();
 
-								
-								System.out.println("[ObjectPeer.receiver] invocation before invoke: " + objectId + "." + methodName);
-								
 								// invoke the method
 								invocation.returnValue = method.invoke(object, args);
-								
-								System.out.println("[ObjectPeer.receiver] invocation end: " + objectId + "." + methodName);
 
 							} catch (InvocationTargetException e) {
 								e.printStackTrace();
@@ -471,13 +462,14 @@ public class ObjectPeer {
 						// remove the waiting invocation
 						StubInvocation invocation = invocations.remove(invocationId);
 
+						// receive return value or the thrown exception
 						receiveReturn(invocation);
 					}
 				}
 			} catch (Exception e) { // something gone wrong, destroy the ObjectPeer
 
 				e.printStackTrace();
-				
+
 				if (disposed)
 					return;
 
@@ -508,6 +500,7 @@ public class ObjectPeer {
 			Class<?> returnClass = null;
 
 			boolean remoteRef = in.readBoolean(); // is it a remote reference?
+			
 			if (remoteRef) { // create stub
 				returnClass = (Class<?>) in.readUnshared();
 				String argObjectId = (String) in.readUnshared();
