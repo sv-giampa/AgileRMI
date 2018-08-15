@@ -1,7 +1,6 @@
 package coarsermi.example.client;
 
 import java.io.IOException;
-import java.net.Socket;
 import java.net.UnknownHostException;
 
 import coarsermi.FailureObserver;
@@ -32,13 +31,13 @@ public class CoarseRmiClient {
 		});
 
 		/*
-		 * - set automatic remote referencing for TestObserver objects. (TestObserver
+		 * set automatic remote referencing for TestObserver objects. (TestObserver
 		 * objects that will be sent over a remote invocation will be automatically
 		 * referenced remotely by the server to the local client)
 		 */
 		registry.setAutoReferenced(ServiceObserver.class);
 
-		// - create the stub for the wanted remote object
+		// create the stub for the wanted remote object
 		service = peer.getStub("service", Service.class);
 	}
 
@@ -47,7 +46,8 @@ public class CoarseRmiClient {
 	 * @throws InterruptedException 
 	 */
 	private static void application() throws InterruptedException {
-		// - create an observer through anonymous class that prints on the client
+		
+		// create an observer through anonymous class that prints on the client
 		// standard output
 		ServiceObserver o = new ServiceObserver() {
 			int counter = 0;
@@ -59,13 +59,11 @@ public class CoarseRmiClient {
 			}
 		};
 
-		// - attach observer two times (the service implementation uses a Set for the
-		// observers, so that this observer will be attached only once)
+		// attach observer
 		service.attachObserver(o);
-
-		// - test calling methods with int and Integer parameters (must give different
-		// results)
+		
 		System.out.println("square(5) = " + service.square(5));
+		
 		System.out.println("5+8 = " + service.add(5, 8));
 
 		System.out.println("Printing message on the server (in 3 seconds)...");

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<project default="javadoc">
+    <target name="javadoc">
+        <javadoc access="public" author="true" classpath="." destdir="docs" doctitle="CoarseRMI Library" nodeprecated="false" nodeprecatedlist="false" noindex="false" nonavbar="false" notree="false" packagenames="coarsermi" source="1.8" sourcepath="src" splitindex="true" use="true" version="true"/>
+    </target>
+</project>

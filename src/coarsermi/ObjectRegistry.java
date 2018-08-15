@@ -76,6 +76,13 @@ public class ObjectRegistry {
 	// failure observers
 	private Set<FailureObserver> failureObservers = new HashSet<>();
 
+	private synchronized void publish(String id, Entry entry) {
+		if (byId.containsKey(id))
+			throw new IllegalArgumentException("the given id '" + id + "' is already bound.");
+		byEntry.put(entry, id);
+		byId.put(id, entry);
+	}
+
 	/**
 	 * Publish the given object respect to the specified interface. The identifier
 	 * is automatically generated and returned
@@ -84,22 +91,15 @@ public class ObjectRegistry {
 	 * @param remoteIf the interface of the service to publish
 	 * @return the generated identifier
 	 */
-	public String publish(Object object, Class<?> remoteIf) {
+	public synchronized String publish(Object object, Class<?> remoteIf) {
 		Entry entry = new Entry(object, remoteIf);
 		if (byEntry.containsKey(entry)) {
 			return byEntry.get(entry);
 		} else {
-			String id = String.valueOf(nextId++);
+			String id = "#" + String.valueOf(nextId++); //id pattern: /\#[0-9]+/
 			publish(id, entry);
 			return id;
 		}
-	}
-
-	private void publish(String id, Entry entry) {
-		if (byId.containsKey(id))
-			throw new IllegalArgumentException("the given id '" + id + "' is already bound.");
-		byEntry.put(entry, id);
-		byId.put(id, entry);
 	}
 
 	/**
@@ -108,11 +108,15 @@ public class ObjectRegistry {
 	 * @param id       the identifier to use for this service
 	 * @param object   the implementation of the service to publish
 	 * @param remoteIf the interface of the service to publish
-	 * @return the generated identifier
 	 * @throws IllegalArgumentException if the specified identifier was already
-	 *                                  bound
+	 *                                  bound or if the id parameter matches the
+	 *                                  automatic referencing id pattern that is
+	 *                                  /\#[0-9]+/
 	 */
-	public void publish(String id, Object object, Class<?> remoteIf) {
+	public synchronized void publish(String id, Object object, Class<?> remoteIf) {
+		if (id.matches("\\#[0-9]+"))
+			throw new IllegalArgumentException(
+					"The used identifier pattern /\\#[0-9]+/ is reserved to atomatic referencing. Please use another identifier pattern.");
 		Entry entry = new Entry(object, remoteIf);
 		publish(id, entry);
 	}
@@ -123,7 +127,7 @@ public class ObjectRegistry {
 	 * @param object   the implementation to unpublish
 	 * @param remoteIf the interface respect to unpublish
 	 */
-	public void unpublish(Object object, Class<?> remoteIf) {
+	public synchronized void unpublish(Object object, Class<?> remoteIf) {
 		String id = byEntry.remove(new Entry(object, remoteIf));
 		if (id != null)
 			byId.remove(id);
@@ -134,7 +138,10 @@ public class ObjectRegistry {
 	 * 
 	 * @param id the id of the service
 	 */
-	public void unpublish(String id) {
+	public synchronized void unpublish(String id) {
+		if (id.matches("\\#[0-9]+"))
+			throw new IllegalArgumentException(
+					"The used identifier pattern /\\#[0-9]+/ is reserved to atomatic referencing. Please use another identifier pattern.");
 		Entry entry = byId.remove(id);
 		if (entry != null)
 			byEntry.remove(entry);
@@ -142,44 +149,62 @@ public class ObjectRegistry {
 
 	/**
 	 * Attach a {@link FailureObserver} object.
+	 * 
 	 * @param o the failure observer
 	 */
-	public void attachFailureObserver(FailureObserver o) {
+	public synchronized void attachFailureObserver(FailureObserver o) {
 		failureObservers.add(o);
 	}
 
 	/**
 	 * Detach a {@link FailureObserver} object.
+	 * 
 	 * @param o the failure observer
 	 */
-	public void detachFailureObserver(FailureObserver o) {
+	public synchronized void detachFailureObserver(FailureObserver o) {
 		failureObservers.remove(o);
 	}
 
-	// Package-level operation used to send a failure to the failure observers
+	/**
+	 * Package-level operation used to send a failure to the failure observers
+	 * 
+	 * @param objectPeer the object peer that caused the failure
+	 * @param exception  the exception thrown by the object peer
+	 */
 	void sendFailure(ObjectPeer objectPeer, Exception exception) {
 		failureObservers.forEach(o -> o.failure(objectPeer, exception));
 	}
 
-	// Package-level operation used to get an object by identifier
-	Object getObject(String id) {
+	/**
+	 * Package-level operation used to get an object by identifier
+	 * 
+	 * @param id
+	 * @return the remotized object
+	 */
+	 synchronized Object getObject(String id) {
 		return byId.get(id).object;
 	}
 
-	// Package-level operation used to get the identifier of a service
-	String getId(Object object, Class<?> remoteIf) {
+	/**
+	 * Package-level operation used to get the identifier of a service
+	 * 
+	 * @param object   the service implementation
+	 * @param remoteIf the service interface
+	 * @return the associated identifier or null if no entry was found
+	 */
+	 synchronized String getId(Object object, Class<?> remoteIf) {
 		return byEntry.get(new Entry(object, remoteIf));
 	}
 
 	/**
 	 * Marks an interface to automatically create remote references for objects that
 	 * are sent as arguments for an invocation or as return values. The objects are
-	 * automatically published on this registry when the related parameter of the stub
-	 * method has a type that matches with the marked interface
+	 * automatically published on this registry when the related parameter of the
+	 * stub method has a type that matches with the marked interface
 	 * 
 	 * @param remoteIf the interface to mark
 	 */
-	public void setAutoReferenced(Class<?> remoteIf) {
+	public synchronized void setAutoReferenced(Class<?> remoteIf) {
 		if (!remoteIf.isInterface())
 			throw new IllegalArgumentException("the specified class is not an interface");
 		autoReferences.add(remoteIf);
@@ -187,11 +212,12 @@ public class ObjectRegistry {
 
 	/**
 	 * Remove a automatic referencing mark for the interface. See the
-	 * {@link ObjectRegistry#setAutoReferenced(Class)} method.
+	 * {@link ObjectRegistry#setAutoReferenced(Class)} method. All the objects
+	 * automatically referenced until this call, remains published in the registry.
 	 * 
 	 * @param remoteIf the interface to unmark
 	 */
-	public void unsetAutoReferenced(Class<?> remoteIf) {
+	public synchronized void unsetAutoReferenced(Class<?> remoteIf) {
 		autoReferences.remove(remoteIf);
 	}
 
