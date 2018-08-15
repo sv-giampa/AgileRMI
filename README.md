@@ -16,4 +16,6 @@ The important disadvantage of this library is that no code mobility is offered, 
 
 See documentation at: https://sv-giampa.github.io/CoarseRMI/
 
-See test projects at: https://github.com/sv-giampa/CoarseRMI/tree/master/test-projects
+See test project at: https://github.com/sv-giampa/CoarseRMI/tree/master/test/CoarseRMI%20-%20Test
+
+See example projects at: https://github.com/sv-giampa/CoarseRMI/tree/master/examples
