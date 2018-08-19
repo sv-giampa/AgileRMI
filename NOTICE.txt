@@ -1,2 +1,2 @@
-JointyC Library
+CoarseRMI Library
 Copyright 2018 Salvatore Giampa'
