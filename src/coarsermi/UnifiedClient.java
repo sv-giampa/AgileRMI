@@ -1,14 +1,11 @@
 package coarsermi;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Class whose static memebers unify the use of more client object peers. This
@@ -24,7 +21,9 @@ import java.util.Set;
 public final class UnifiedClient {
 
 	private static Object lock = new Object();
-	
+
+	private static ObjectRegistry registry = new ObjectRegistry();
+
 	private static FailureObserver failureObserver = new FailureObserver() {
 		@Override
 		public void failure(ObjectPeer objectPeer, Exception exception) {
@@ -34,15 +33,12 @@ public final class UnifiedClient {
 		}
 	};
 
-	private static ObjectRegistry registry = new ObjectRegistry();
-
-	private static Map<InetSocketAddress, ObjectPeer> peers = Collections.synchronizedMap(new HashMap<>());
-	
-
 	static {
 		registry.attachFailureObserver(failureObserver);
 	}
-	
+
+	private static Map<InetSocketAddress, ObjectPeer> peers = Collections.synchronizedMap(new HashMap<>());
+
 	public static ObjectRegistry getRegistry() {
 		return registry;
 	}
@@ -57,7 +53,7 @@ public final class UnifiedClient {
 	 * @param port          the host port
 	 * @param objectId      the remote object identifier
 	 * @param stubInterface the stub's interface
-	 * @param <T> type of stub object
+	 * @param               <T> type of the stub object
 	 * @return the stub object
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur

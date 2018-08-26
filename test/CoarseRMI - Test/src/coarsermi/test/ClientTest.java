@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.lang.reflect.Proxy;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
@@ -14,6 +16,7 @@ import coarsermi.FailureObserver;
 import coarsermi.ObjectPeer;
 import coarsermi.ObjectRegistry;
 import coarsermi.ObjectServer;
+import coarsermi.PeerDispositionException;
 import coarsermi.test.service.TestIF;
 import coarsermi.test.service.TestImpl;
 import coarsermi.test.service.TestObserver;
@@ -30,13 +33,13 @@ class ClientTest {
 	ObjectPeer peer;
 	TestIF stub;
 	
-	@BeforeAll
+	@BeforeEach
 	void setUp() throws Exception {
 		serverSetUp();
 		clientSetUp();
 	}
 
-	@AfterAll
+	@AfterEach
 	void unSet() throws Exception {
 		objectServer.stop();
 	}
@@ -149,6 +152,74 @@ class ClientTest {
 		stub.testObserver(observer);
 
 		assertEquals(true, observerCalled);
+	}
+	
+
+
+	@Test
+	void testDispositionBeforeInvocation() {
+		objectServer.stop();
+		
+		boolean test;
+		try {
+			stub.test(1);
+			test = false;
+		} catch (PeerDispositionException e) {
+			e.printStackTrace();
+			test = true;
+		}
+		
+		assertTrue(test, "No exception thrown!");
+
+	}
+	
+
+	@Test
+	void testDispositionDuringInvocation() {
+
+		TestObserver observer = new TestObserver() {
+			@Override
+			public void update(TestIF test) {
+				objectServer.stop();
+			}
+		};
+		
+		boolean test;
+		try {
+			stub.testObserver(observer);
+			test = false;
+		} catch (PeerDispositionException e) {
+			e.printStackTrace();
+			test = true;
+		}
+		
+		assertTrue(test, "No exception thrown!");
+	}
+	
+	@Test
+	void testDispositionAfterInvocation() {
+
+		boolean test;
+		try {
+			stub.test(1);
+			test = false;
+		} catch (PeerDispositionException e) {
+			test = true;
+		}
+		
+		assertFalse(test, "Exception should not be thrown!");
+		
+		objectServer.stop();
+		
+		try {
+			stub.test(1);
+			test = false;
+		} catch (PeerDispositionException e) {
+			test = true;
+		}
+		
+		assertTrue(test, "No exception thrown!");
+
 	}
 
 }

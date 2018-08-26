@@ -45,7 +45,7 @@ class StubInvocationHandler implements InvocationHandler {
 		}
 
 		if (peer.isDisposed()) {
-			throw new RuntimeException("The ObjectPeer for this stub has been disposed.");
+			throw new PeerDispositionException();
 		} else {
 
 			peer.putInvocation(invocation);
@@ -67,7 +67,7 @@ class StubInvocationHandler implements InvocationHandler {
 
 		Class<?> returnType = method.getReturnType();
 
-		if (invocation.returnValue == null && returnType.isPrimitive()) {
+		if (!returnType.equals(void.class) && invocation.returnValue == null && returnType.isPrimitive()) {
 			if (returnType == boolean.class)
 				return false;
 			if (returnType == byte.class)
