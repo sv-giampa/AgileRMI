@@ -6,7 +6,7 @@ This library does not strictly implements the Java RMI specifications.
 
 The fundamental advantages of this library are the following:
 - The possibility to export remotely any object respect to a specific interface, without the requirement to implement a explicitly marked remote interface, as in Java RMI;
-- All the communication tasks for two machines, are executed over a single TCP connection;
+- All the communication tasks for two machines are executed over a single TCP connection;
 - Interests of RMI configuration are separeted from the application domain that uses client stubs;
 - The backing RMI system is very easy to configure directly through code.
 
