@@ -1,5 +1,6 @@
-package coarsermi;
+package coarsersi;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -224,7 +225,8 @@ public class ObjectPeer {
 
 	private void forceInvocationReturn(StubInvocation invocation) {
 		synchronized (invocation) {
-			invocation.thrownException = new PeerDispositionException();
+			if(registry.isDispositionExceptionEnabled())
+				invocation.thrownException = new PeerDispositionException();
 			invocation.returned = true;
 			invocation.notifyAll();
 		}
@@ -258,6 +260,15 @@ public class ObjectPeer {
 	 */
 	void putInvocation(StubInvocation invocation) throws InterruptedException {
 		invokeQueue.put(invocation);
+	}
+	
+
+	
+	static void serialize(Object obj, Class<?> objClass, DataOutputStream out) {
+		if(objClass == null)
+			objClass = obj.getClass();
+		else if(!objClass.isInstance(obj))
+			throw new IllegalArgumentException("The passed object 'obj' is not instance of 'objClass'");
 	}
 
 	/**

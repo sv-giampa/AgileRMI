@@ -1,4 +1,4 @@
-package coarsermi;
+package coarsersi;
 
 /**
  * Thrown when an ObjectPeer has been disposed before or during the invocation.

@@ -1,4 +1,4 @@
-package coarsermi;
+package coarsersi;
 
 import java.io.IOException;
 import java.net.ServerSocket;

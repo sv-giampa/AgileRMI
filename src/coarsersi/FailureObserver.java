@@ -1,4 +1,4 @@
-package coarsermi;
+package coarsersi;
 
 /**
  * Defines an observer used to collect the
@@ -15,5 +15,5 @@ public interface FailureObserver {
 	 * @param objectPeer the disposed {@link ObjectPeer} object
 	 * @param exception the thrown exception
 	 */
-	void failure(ObjectPeer objectPeer, Exception exception);
+	void failure(ObjectPeer objectPeer, Exception exception) throws Throwable;
 }

@@ -12,14 +12,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
-import coarsermi.FailureObserver;
-import coarsermi.ObjectPeer;
-import coarsermi.ObjectRegistry;
-import coarsermi.ObjectServer;
-import coarsermi.PeerDispositionException;
 import coarsermi.test.service.TestIF;
 import coarsermi.test.service.TestImpl;
 import coarsermi.test.service.TestObserver;
+import coarsersi.FailureObserver;
+import coarsersi.ObjectPeer;
+import coarsersi.ObjectRegistry;
+import coarsersi.ObjectServer;
+import coarsersi.PeerDispositionException;
 
 @TestInstance(Lifecycle.PER_CLASS)
 class ClientTest {

@@ -1,4 +1,4 @@
-package coarsermi;
+package coarsersi;
 
 /**
  * Defines the keys to index the stubs in an {@link ObjectPeer}

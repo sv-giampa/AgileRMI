@@ -1,4 +1,4 @@
-package coarsermi;
+package coarsersi;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -75,6 +75,16 @@ public class ObjectRegistry {
 
 	// failure observers
 	private Set<FailureObserver> failureObservers = new HashSet<>();
+	
+	private boolean dispositionExceptionEnabled = true;
+	
+	public void setDispositionExceptionEnabled(boolean dispositionExceptionEnabled) {
+		this.dispositionExceptionEnabled = dispositionExceptionEnabled;
+	}
+	
+	public boolean isDispositionExceptionEnabled() {
+		return dispositionExceptionEnabled;
+	}
 
 	private synchronized void publish(String id, Entry entry) {
 		if (byId.containsKey(id))
@@ -172,7 +182,11 @@ public class ObjectRegistry {
 	 * @param exception  the exception thrown by the object peer
 	 */
 	void sendFailure(ObjectPeer objectPeer, Exception exception) {
-		failureObservers.forEach(o -> o.failure(objectPeer, exception));
+		failureObservers.forEach(o -> {
+			try {
+				o.failure(objectPeer, exception);
+			} catch (Throwable e) {}
+		});
 	}
 
 	/**

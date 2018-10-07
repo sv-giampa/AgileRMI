@@ -1,4 +1,4 @@
-package coarsermi;
+package coarsersi;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -24,12 +24,11 @@ public final class UnifiedClient {
 
 	private static ObjectRegistry registry = new ObjectRegistry();
 
-	private static FailureObserver failureObserver = new FailureObserver() {
-		@Override
-		public void failure(ObjectPeer objectPeer, Exception exception) {
-			synchronized (lock) {
-				peers.values().remove(objectPeer);
-			}
+	private static Map<InetSocketAddress, ObjectPeer> peers = Collections.synchronizedMap(new HashMap<>());
+
+	private static FailureObserver failureObserver = (objectPeer, exception) -> {
+		synchronized (lock) {
+			peers.values().remove(objectPeer);
 		}
 	};
 
@@ -37,8 +36,9 @@ public final class UnifiedClient {
 		registry.attachFailureObserver(failureObserver);
 	}
 
-	private static Map<InetSocketAddress, ObjectPeer> peers = Collections.synchronizedMap(new HashMap<>());
-
+	/**
+	 * Gets the global registry used by ObjectPeer instances created by the unified client
+	 */
 	public static ObjectRegistry getRegistry() {
 		return registry;
 	}
