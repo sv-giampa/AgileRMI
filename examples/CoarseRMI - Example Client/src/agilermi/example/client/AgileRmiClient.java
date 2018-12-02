@@ -9,7 +9,7 @@ import agilermi.RmiRegistry;
 import agilermi.example.service.Service;
 import agilermi.example.service.ServiceObserver;
 
-public class CoarseRmiClient {
+public class AgileRmiClient {
 	private static Service service;
 
 	public static void main(String[] args) throws UnknownHostException, IOException, InterruptedException {
@@ -19,8 +19,7 @@ public class CoarseRmiClient {
 
 	private static void rmiSetup() throws UnknownHostException, IOException {
 		// connect the ObjectPeer, and get the ObjectRegistry
-		RmiRegistry registry = new RmiRegistry(3032);
-		//RmiHandler peer = RmiHandler.connect("localhost", 3031);
+		RmiRegistry registry = new RmiRegistry();
 
 		// attach failure observer to manage connection and I/O errors
 		registry.attachFailureObserver(new FailureObserver() {
@@ -35,7 +34,7 @@ public class CoarseRmiClient {
 		 * objects that will be sent over a remote invocation will be automatically
 		 * referenced remotely by the server to the local client)
 		 */
-		//context.exportInterface(ServiceObserver.class);
+		registry.exportInterface(ServiceObserver.class);
 
 		// create the stub for the wanted remote object
 		service = (Service) registry.getStub("localhost", 3031, "service", Service.class);
@@ -43,10 +42,11 @@ public class CoarseRmiClient {
 
 	/**
 	 * Application (do not care about connection and other communication details)
-	 * @throws InterruptedException 
+	 * 
+	 * @throws InterruptedException
 	 */
 	private static void application() throws InterruptedException {
-		
+
 		// create an observer through anonymous class that prints on the client
 		// standard output
 		ServiceObserver o = new ServiceObserver() {
@@ -61,9 +61,9 @@ public class CoarseRmiClient {
 
 		// attach observer
 		service.attachObserver(o);
-		
+
 		System.out.println("square(5) = " + service.square(5));
-		
+
 		System.out.println("5+8 = " + service.add(5, 8));
 
 		System.out.println("Printing message on the server (in 3 seconds)...");
@@ -75,10 +75,10 @@ public class CoarseRmiClient {
 		service.startObserversCalls();
 		Thread.sleep(3000);
 		System.out.println("Asynchronous observers calls ended.");
-		
+
 		System.out.println("Detaching observer...");
 		service.detachObserver(o);
-		
+
 		System.out.println("Restarting asynchronous observers calls...");
 		service.startObserversCalls();
 		Thread.sleep(3000);
@@ -90,7 +90,7 @@ public class CoarseRmiClient {
 		System.out.println("Kill the server to see failure observer print!");
 		service.printlnOnServer("Kill the server to see failure observer print!");
 		Thread.sleep(8000);
-		
+
 		System.out.println("Example terminated.");
 		Thread.sleep(2000);
 	}

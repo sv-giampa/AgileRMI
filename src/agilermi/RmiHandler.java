@@ -287,7 +287,6 @@ public class RmiHandler {
 
 					if (handle instanceof InvocationHandle) {
 						InvocationHandle invocation = (InvocationHandle) handle;
-						System.out.println("InvocationHandle: invocationId=" + invocation.id);
 						try {
 							out.writeUnshared(handle);
 							invocations.put(invocation.id, invocation);
@@ -303,7 +302,6 @@ public class RmiHandler {
 																	// response
 						ReturnHandle ret = (ReturnHandle) handle;
 						try {
-							// ret.returnValue = remotize(ret.returnValue, ret.returnClass);
 							out.writeUnshared(ret);
 						} catch (NotSerializableException e) {
 							ret.returnValue = null;

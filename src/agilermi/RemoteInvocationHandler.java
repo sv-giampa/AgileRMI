@@ -111,11 +111,9 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 			try {
 				synchronized (invocation) {
-					System.out.println("stub waiting for invocation: " + invocation.method);
 					while (!invocation.returned) {
 						invocation.wait();
 					}
-					System.out.println("stub invocation returned: " + invocation.method);
 
 					if (invocation.thrownException != null) {
 						invocation.thrownException.fillInStackTrace();
