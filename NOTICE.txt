@@ -1,2 +1,2 @@
-CoarseRMI Library
+AgileRMI Library
 Copyright 2018 Salvatore Giampa'

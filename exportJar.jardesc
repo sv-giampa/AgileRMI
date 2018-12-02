@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="WINDOWS-1252" standalone="no"?>
 <jardesc>
-    <jar path="CoarseRMI - Library/jar/CoarseRMI-v1.0.1.jar"/>
-    <options buildIfNeeded="true" compress="true" descriptionLocation="/CoarseRMI - Library/exportJar.jardesc" exportErrors="true" exportWarnings="true" includeDirectoryEntries="false" overwrite="true" saveDescription="true" storeRefactorings="false" useSourceFolders="false"/>
+    <jar path="AgileRMI - Library/jar/AgileRMI-v2.0.0.jar"/>
+    <options buildIfNeeded="true" compress="true" descriptionLocation="/AgileRMI - Library/exportJar.jardesc" exportErrors="true" exportWarnings="true" includeDirectoryEntries="false" overwrite="true" saveDescription="true" storeRefactorings="false" useSourceFolders="false"/>
     <storedRefactorings deprecationInfo="true" structuralOnly="false"/>
     <selectedProjects/>
     <manifest generateManifest="true" manifestLocation="" manifestVersion="1.0" reuseManifest="false" saveManifest="false" usesManifest="true">
@@ -11,10 +11,10 @@
         </sealing>
     </manifest>
     <selectedElements exportClassFiles="false" exportJavaFiles="true" exportOutputFolder="true">
-        <javaElement handleIdentifier="=CoarseRMI - Library/src"/>
-        <file path="/CoarseRMI - Library/README.md"/>
-        <folder path="/CoarseRMI - Library/docs"/>
-        <file path="/CoarseRMI - Library/LICENSE"/>
-        <file path="/CoarseRMI - Library/NOTICE.txt"/>
+        <javaElement handleIdentifier="=AgileRMI - Library/src"/>
+        <file path="/AgileRMI - Library/README.md"/>
+        <file path="/AgileRMI - Library/NOTICE.txt"/>
+        <file path="/AgileRMI - Library/LICENSE"/>
+        <folder path="/AgileRMI - Library/docs"/>
     </selectedElements>
 </jardesc>
