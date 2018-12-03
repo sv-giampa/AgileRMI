@@ -18,6 +18,7 @@ import org.junit.jupiter.api.TestInstance.Lifecycle;
 import agilermi.FailureObserver;
 import agilermi.RmiHandler;
 import agilermi.RmiRegistry;
+import agilermi.filter.LzcFilterFactory;
 import agilermi.test.service.ObserverContainer;
 import agilermi.test.service.TestIF;
 import agilermi.test.service.TestImpl;
@@ -27,11 +28,11 @@ import agilermi.test.service.TestObserver;
 class ClientTest {
 
 	// server objects
-	RmiRegistry serverContext;
-	RmiRegistry clientContext;
+	RmiRegistry serverRegistry;
+	RmiRegistry clientRegistry;
 
 	// client objects
-	RmiHandler socket;
+	RmiHandler rmiHandler;
 	TestIF stub;
 
 	@BeforeAll
@@ -42,32 +43,34 @@ class ClientTest {
 
 	@AfterAll
 	void unSet() throws Exception {
-		clientContext.finalize();
-		serverContext.finalize();
+		clientRegistry.finalize();
+		serverRegistry.finalize();
 	}
 
 	void serverSetUp() throws Exception {
 		// object server creation
-		serverContext = new RmiRegistry(3031, true, null, null);
+		// serverRegistry = new RmiRegistry(3031, true);
+		serverRegistry = new RmiRegistry(3031, true, new LzcFilterFactory());
 
 		// remote objects creation
 		TestIF test = new TestImpl();
 
 		// remote objects publishing
-		serverContext.publish("test", test);
+		serverRegistry.publish("test", test);
 	}
 
 	void clientSetUp() throws Exception {
 		// create connection, the ObjectPeer, and get the ObjectRegistry
-		clientContext = new RmiRegistry(3032, true, null, null);
-		socket = clientContext.getRmiHandler("localhost", 3031);
+		// clientRegistry = new RmiRegistry();
+		clientRegistry = new RmiRegistry(new LzcFilterFactory());
+		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);
 
 		// attach failure observer to manage connection and I/O errors
-		clientContext.attachFailureObserver(new FailureObserver() {
+		clientRegistry.attachFailureObserver(new FailureObserver() {
 			@Override
 			public void failure(RmiHandler rmiHandler, Exception exception) {
 				System.out.println("The object peer generated an error:\n" + exception);
-				assertEquals(socket, rmiHandler);
+				assertEquals(rmiHandler, rmiHandler);
 				assertEquals(true, rmiHandler.isDisposed());
 			}
 		});
@@ -77,13 +80,13 @@ class ClientTest {
 		 * objects that will be sent over a remote invocation will be automatically
 		 * referenced remotely by the server to the local client)
 		 */
-		clientContext.exportInterface(TestObserver.class);
+		clientRegistry.exportInterface(TestObserver.class);
 	}
 
 	@BeforeEach
 	void getStub() throws UnknownHostException, IOException {
 		// - create the stubs for the wanted remote objects
-		stub = (TestIF) clientContext.getStub("localhost", 3031, "test", TestIF.class);
+		stub = (TestIF) clientRegistry.getStub("localhost", 3031, "test", TestIF.class);
 	}
 
 	@Test
@@ -167,7 +170,7 @@ class ClientTest {
 	}
 
 	/*
-	 * @Test void testDispositionBeforeInvocation() { clientContext.stopListener();
+	 * @Test void testDispositionBeforeInvocation() { clientRegistry.stopListener();
 	 * 
 	 * boolean test; try { stub.test(1); test = false; } catch
 	 * (RmiDispositionException e) { e.printStackTrace(); test = true; }
@@ -182,7 +185,7 @@ class ClientTest {
 	 * 
 	 * TestObserver observer = new TestObserver() {
 	 * 
-	 * @Override public void update(TestIF test) { clientContext.stopListener(); }
+	 * @Override public void update(TestIF test) { clientRegistry.stopListener(); }
 	 * };
 	 * 
 	 * boolean test; try { stub.testObserver(observer); test = false; } catch
@@ -197,7 +200,7 @@ class ClientTest {
 	 * 
 	 * assertFalse(test, "Exception should not be thrown!");
 	 * 
-	 * clientContext.stopListener();
+	 * clientRegistry.stopListener();
 	 * 
 	 * try { stub.test(1); test = false; } catch (RmiDispositionException e) { test
 	 * = true; }

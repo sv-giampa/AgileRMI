@@ -1,3 +1,20 @@
+/**
+ *  Copyright 2017 Salvatore Giampà
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *  
+ **/
+
 package agilermi;
 
 import java.io.IOException;
@@ -15,6 +32,8 @@ import java.util.Set;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
+
+import agilermi.filter.FilterFactory;
 
 /**
  * Defines a simple class that accepts new TCP connections over a port of the
@@ -57,10 +76,19 @@ public class RmiRegistry {
 
 	private Map<String, Skeleton> skeletonById = new HashMap<>();
 
-	public RmiRegistry() {
-		this.ssFactory = ServerSocketFactory.getDefault();
-		this.sFactory = SocketFactory.getDefault();
-		attachFailureObserver(failureObserver);
+	private FilterFactory filterFactory;
+
+	public RmiRegistry() throws IOException {
+		this(0, true, null, null, null, false);
+	}
+
+	public RmiRegistry(FilterFactory filterFactory) throws IOException {
+		this(0, true, null, null, filterFactory, false);
+	}
+
+	public RmiRegistry(ServerSocketFactory ssFactory, SocketFactory socketFactory, FilterFactory filterFactory)
+			throws IOException {
+		this(0, true, ssFactory, socketFactory, filterFactory, false);
 	}
 
 	/**
@@ -70,12 +98,42 @@ public class RmiRegistry {
 	 * @throws IOException if an I\O error occurs
 	 */
 	public RmiRegistry(int port) throws IOException {
-		this(port, true, null, null);
+		this(port, true, null, null, null, true);
 	}
 
-	public RmiRegistry(int port, boolean daemon, ServerSocketFactory ssFactory, SocketFactory sFactory)
-			throws IOException {
-		this(port, daemon, null, null, true);
+	/**
+	 * 
+	 * @param port
+	 * @param daemon
+	 * @throws IOException
+	 */
+	public RmiRegistry(int port, boolean daemon) throws IOException {
+		this(port, daemon, null, null, null, true);
+	}
+
+	/**
+	 * 
+	 * @param port
+	 * @param daemon
+	 * @throws IOException
+	 */
+	public RmiRegistry(int port, boolean daemon, FilterFactory filterFactory) throws IOException {
+		this(port, daemon, null, null, filterFactory, true);
+	}
+
+	/**
+	 * Creates a new Object server with a new empty object registry
+	 * 
+	 * @param port the port to listen on
+	 * @throws IOException if an I\O error occurs
+	 */
+	public RmiRegistry(int port, FilterFactory filterFactory) throws IOException {
+		this(port, true, null, null, filterFactory, true);
+	}
+
+	public RmiRegistry(int port, boolean daemon, ServerSocketFactory ssFactory, SocketFactory sFactory,
+			FilterFactory filterFactory) throws IOException {
+		this(port, daemon, ssFactory, sFactory, filterFactory, true);
 	}
 
 	/**
@@ -89,7 +147,7 @@ public class RmiRegistry {
 	 * @throws IOException if an I\O error occurs
 	 */
 	public RmiRegistry(int port, boolean daemon, ServerSocketFactory ssFactory, SocketFactory sFactory,
-			boolean enableListener) throws IOException {
+			FilterFactory filterFactory, boolean enableListener) throws IOException {
 		if (ssFactory == null)
 			ssFactory = ServerSocketFactory.getDefault();
 		if (sFactory == null)
@@ -97,6 +155,7 @@ public class RmiRegistry {
 
 		this.ssFactory = ssFactory;
 		this.sFactory = sFactory;
+		this.filterFactory = filterFactory;
 		attachFailureObserver(failureObserver);
 
 		if (enableListener)
@@ -151,7 +210,7 @@ public class RmiRegistry {
 			List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
 			RmiHandler rmiHandler = null;
 			if (rmiHandlers.size() == 0)
-				rmiHandlers.add(rmiHandler = RmiHandler.connect(host, port, this, sFactory));
+				rmiHandlers.add(rmiHandler = RmiHandler.connect(host, port, this, sFactory, filterFactory));
 			else
 				rmiHandler = rmiHandlers.get((int) (Math.random() * rmiHandlers.size()));
 			return rmiHandler;
@@ -211,7 +270,7 @@ public class RmiRegistry {
 			while (listener != null && !listener.isInterrupted())
 				try {
 					Socket socket = serverSocket.accept();
-					RmiHandler rmiHandler = new RmiHandler(socket, RmiRegistry.this);
+					RmiHandler rmiHandler = new RmiHandler(socket, RmiRegistry.this, filterFactory);
 					if (!handlers.containsKey(rmiHandler.getInetSocketAddress()))
 						handlers.put(rmiHandler.getInetSocketAddress(), new ArrayList<>(1));
 					handlers.get(rmiHandler.getInetSocketAddress()).add(rmiHandler);

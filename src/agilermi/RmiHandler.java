@@ -1,7 +1,28 @@
+/**
+ *  Copyright 2017 Salvatore Giampà
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *  
+ **/
+
 package agilermi;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.NotSerializableException;
+import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -11,13 +32,16 @@ import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 
 import javax.net.SocketFactory;
+
+import agilermi.filter.FilterFactory;
 
 /**
  * 
@@ -59,7 +83,7 @@ public class RmiHandler {
 	private RmiObjectOutputStream out;
 	private RmiObjectInputStream in;
 
-	private RmiRegistry registry;
+	private RmiRegistry rmiRegistry;
 
 	/**
 	 * Map for invocations that are waiting a response
@@ -76,7 +100,7 @@ public class RmiHandler {
 	 */
 	private boolean disposed = false;
 
-	private Set<Skeleton> references = new HashSet<>();
+	private Set<String> references = new TreeSet<>();
 
 	/**
 	 * Implements the flyweight pattern for stubs creation
@@ -95,50 +119,77 @@ public class RmiHandler {
 	 * @throws IOException          if an I/O error occurs
 	 */
 	public static RmiHandler connect(String address, int port) throws UnknownHostException, IOException {
-		Socket socket = new Socket(address, port);
-		return new RmiHandler(socket, new RmiRegistry(0));
+		return connect(address, port, new RmiRegistry(), null, null);
 	}
 
 	/**
-	 * Connects to the selected address and port and creates a new ObjectPeer over
-	 * that connection, with the specified {@link ObjectRegistry}
+	 * Connects to the selected address and port and creates a new RmiHandler over
+	 * that connection, with the specified {@link RmiRegistry}
 	 * 
-	 * @param address  the address of the object server
-	 * @param port     the port of the object server
-	 * @param registry the registry that must be used by the ObjectPeer
-	 * @return the ObjectPeer object representing the remote object server
+	 * @param address     the address of the object server
+	 * @param port        the port of the object server
+	 * @param rmiRegistry the rmiRegistry that must be used by the RmiHandler
+	 * @return the RmiHandler object representing the remote object server
 	 * @throws UnknownHostException if the host cannot be found
 	 * @throws IOException          if an I/O error occurs
 	 */
-	public static RmiHandler connect(String address, int port, RmiRegistry context, SocketFactory sFactory)
-			throws UnknownHostException, IOException {
-		Socket socket = sFactory.createSocket(address, port);
-		return new RmiHandler(socket, context);
+	public static RmiHandler connect(String address, int port, RmiRegistry rmiRegistry, SocketFactory sFactory,
+			FilterFactory filterFactory) throws UnknownHostException, IOException {
+		Socket socket = null;
+		if (sFactory != null)
+			socket = sFactory.createSocket(address, port);
+		else
+			socket = new Socket(address, port);
+		return new RmiHandler(socket, rmiRegistry, filterFactory);
 	}
 
 	/**
-	 * Constructs a new ObjectPeer over the connection specified by the given
-	 * socket, with the specified {@link ObjectRegistry}.
+	 * Constructs a new RmiHandler over the connection specified by the given
+	 * socket, with the specified {@link RmiRegistry}.
 	 * 
-	 * @param socket   the socket over which the ObjectPeer will be created
-	 * @param registry the {@link ObjectRegistry} to use
-	 * @see RmiHandler#connect(String, int, ObjectRegistry)
+	 * @param socket      the socket over which the ObjectPeer will be created
+	 * @param rmiRegistry the {@link ObjectRegistry} to use
+	 * @see RmiHandler#connect(String, int, RmiRegistry, SocketFactory,
+	 *      FilterFactory)
 	 * @see RmiHandler#connect(String, int)
 	 * @throws IOException if an I/O error occurs
 	 */
 	public RmiHandler(Socket socket, RmiRegistry registry) throws IOException {
+		this(socket, registry, null);
+	}
+
+	/**
+	 * Constructs a new RmiHandler over the connection specified by the given
+	 * socket, with the specified {@link RmiRegistry}.
+	 * 
+	 * @param socket        the socket over which the ObjectPeer will be created
+	 * @param rmiRegistry   the {@link ObjectRegistry} to use
+	 * @param filterFactory a {@link FilterFactory} that allows to add communication
+	 *                      levels, such as levels for cryptography or data
+	 *                      compression
+	 * @see RmiHandler#connect(String, int, RmiRegistry, SocketFactory,
+	 *      FilterFactory)
+	 * @see RmiHandler#connect(String, int)
+	 * @throws IOException if an I/O error occurs
+	 */
+	@SuppressWarnings("resource")
+	public RmiHandler(Socket socket, RmiRegistry rmiRegistry, FilterFactory filterFactory) throws IOException {
 		inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
 		this.socket = socket;
-		this.registry = registry;
+		this.rmiRegistry = rmiRegistry;
 
-		out = new RmiObjectOutputStream(socket.getOutputStream(), registry);
-		in = new RmiObjectInputStream(socket.getInputStream(), registry, inetSocketAddress.getHostString(),
-				inetSocketAddress.getPort());
+		OutputStream output = new BufferedOutputStream(socket.getOutputStream(), 512);
+		InputStream input = new BufferedInputStream(socket.getInputStream(), 512);
 
-//		receiver.setDaemon(true);
-//		sender.setDaemon(true);
-//		receiver.start();
-//		sender.start();
+		if (filterFactory != null) {
+			output = filterFactory.buildOutputStream(output);
+			input = filterFactory.buildInputStream(input);
+		}
+
+		out = new RmiObjectOutputStream(output, rmiRegistry);
+		out.flush();
+
+		in = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress);
 
 		receiver.setDaemon(true);
 		sender.setDaemon(true);
@@ -167,24 +218,18 @@ public class RmiHandler {
 			throw new IllegalArgumentException("No interface has been passed");
 
 		Object stub;
-
-		// if (stubFlyweight.containsKey(key)) {
-		// stub = stubFlyweight.get(key);
-		// } else {
 		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
 				new RemoteInvocationHandler(objectId, this));
-		// stubFlyweight.put(key, stub);
-		// }
 		return stub;
 	}
 
 	/**
-	 * Gets the registry used by this ObjectPeer
+	 * Gets the rmiRegistry used by this ObjectPeer
 	 * 
-	 * @return the registry used by this peer
+	 * @return the rmiRegistry used by this peer
 	 */
 	public RmiRegistry getObjectContext() {
-		return registry;
+		return rmiRegistry;
 	}
 
 	/**
@@ -202,7 +247,7 @@ public class RmiHandler {
 	 * {@link RmiHandler#getStub(String, Class)} method will result in an
 	 * {@link IllegalStateException} and all the stubs generated by this
 	 * {@link RmiHandler} object will not function properly. A call to this method
-	 * cause a callback on the failure observers attached to the registry sending
+	 * cause a callback on the failure observers attached to the rmiRegistry sending
 	 * them an instance of {@link RmiDispositionException}
 	 */
 	public synchronized void dispose() {
@@ -228,12 +273,16 @@ public class RmiHandler {
 			}
 		}
 
-		for (Skeleton sk : references) {
-			sk.removeAllRefs(this);
+		for (Iterator<String> it = references.iterator(); it.hasNext();) {
+			Skeleton sk = rmiRegistry.getSkeleton(it.next());
+			if (sk != null) {
+				sk.removeAllRefs(this);
+				it.remove();
+			}
 		}
 
 		RmiDispositionException dispositionException = new RmiDispositionException();
-		registry.sendFailure(this, dispositionException);
+		rmiRegistry.sendFailure(this, dispositionException);
 
 		socket = null;
 		out = null;
@@ -244,7 +293,7 @@ public class RmiHandler {
 
 	private void forceInvocationReturn(InvocationHandle invocation) {
 		synchronized (invocation) {
-			if (registry.isDispositionExceptionEnabled())
+			if (rmiRegistry.isDispositionExceptionEnabled())
 				invocation.thrownException = new RmiDispositionException();
 			invocation.returned = true;
 			invocation.notifyAll();
@@ -268,7 +317,8 @@ public class RmiHandler {
 	 * @throws InterruptedException
 	 */
 	void putHandle(Handle handle) throws InterruptedException {
-		invokeQueue.put(handle);
+		if (invokeQueue != null)
+			invokeQueue.put(handle);
 	}
 
 	/**
@@ -341,7 +391,7 @@ public class RmiHandler {
 				} catch (Exception e1) {
 				}
 
-				registry.sendFailure(RmiHandler.this, e);
+				rmiRegistry.sendFailure(RmiHandler.this, e);
 			}
 		}
 	};
@@ -365,7 +415,7 @@ public class RmiHandler {
 							retHandle.invocationId = invocation.id;
 							try {
 
-								Skeleton skeleton = registry.getSkeleton(invocation.objectId);
+								Skeleton skeleton = rmiRegistry.getSkeleton(invocation.objectId);
 
 								// retrieve the object
 								Object object = skeleton.getObject();
@@ -432,15 +482,15 @@ public class RmiHandler {
 						}
 					} else if (handle instanceof FinalizeHandle) {
 						FinalizeHandle finHandle = (FinalizeHandle) handle;
-						Skeleton sk = registry.getSkeleton(finHandle.objectId);
+						Skeleton sk = rmiRegistry.getSkeleton(finHandle.objectId);
 						if (sk != null)
 							sk.removeRef(RmiHandler.this);
-					} else if (handle instanceof RefHandle) {
-						RefHandle refHandle = (RefHandle) handle;
-						if (refHandle.objectId != null) {
-							Skeleton sk = registry.getSkeleton(refHandle.objectId);
+					} else if (handle instanceof NewReferenceHandle) {
+						NewReferenceHandle newReferenceHandle = (NewReferenceHandle) handle;
+						if (newReferenceHandle.objectId != null) {
+							Skeleton sk = rmiRegistry.getSkeleton(newReferenceHandle.objectId);
 							sk.addRef(RmiHandler.this);
-							references.add(sk);
+							references.add(sk.getId());
 						}
 					} else {
 						throw new RuntimeException("AgileRMI INTERNAL ERROR");
@@ -462,7 +512,7 @@ public class RmiHandler {
 				} catch (Exception e1) {
 				}
 
-				registry.sendFailure(RmiHandler.this, e);
+				rmiRegistry.sendFailure(RmiHandler.this, e);
 			}
 		}
 	};

@@ -17,12 +17,11 @@
 
 package agilermi;
 
-class FinalizeHandle implements Handle {
-	private static final long serialVersionUID = 6485937225497004801L;
+class NewReferenceHandle implements Handle {
+	private static final long serialVersionUID = 8561515474575531127L;
+	public String objectId;
 
-	public final String objectId;
-
-	public FinalizeHandle(String objectId) {
+	public NewReferenceHandle(String objectId) {
 		this.objectId = objectId;
 	}
 

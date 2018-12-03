@@ -15,15 +15,24 @@
  *  
  **/
 
-package agilermi;
+package agilermi.filter;
 
-class FinalizeHandle implements Handle {
-	private static final long serialVersionUID = 6485937225497004801L;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
-	public final String objectId;
+/**
+ * This interface is used to specify a factory for input and output streams that
+ * are used on TCP communication in Agile RMI. For example, this interface can
+ * be used to add a compress layer to the communication between hosts.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
+public interface FilterFactory {
 
-	public FinalizeHandle(String objectId) {
-		this.objectId = objectId;
-	}
+	OutputStream buildOutputStream(OutputStream outputStream) throws IOException;
+
+	InputStream buildInputStream(InputStream inputStream) throws IOException;
 
 }
