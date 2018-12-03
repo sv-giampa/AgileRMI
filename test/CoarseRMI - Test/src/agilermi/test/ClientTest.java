@@ -18,7 +18,6 @@ import org.junit.jupiter.api.TestInstance.Lifecycle;
 import agilermi.FailureObserver;
 import agilermi.RmiHandler;
 import agilermi.RmiRegistry;
-import agilermi.filter.LzcFilterFactory;
 import agilermi.test.service.ObserverContainer;
 import agilermi.test.service.TestIF;
 import agilermi.test.service.TestImpl;
@@ -49,8 +48,7 @@ class ClientTest {
 
 	void serverSetUp() throws Exception {
 		// object server creation
-		// serverRegistry = new RmiRegistry(3031, true);
-		serverRegistry = new RmiRegistry(3031, true, new LzcFilterFactory());
+		serverRegistry = new RmiRegistry(3031, true);
 
 		// remote objects creation
 		TestIF test = new TestImpl();
@@ -61,8 +59,7 @@ class ClientTest {
 
 	void clientSetUp() throws Exception {
 		// create connection, the ObjectPeer, and get the ObjectRegistry
-		// clientRegistry = new RmiRegistry();
-		clientRegistry = new RmiRegistry(new LzcFilterFactory());
+		clientRegistry = new RmiRegistry();
 		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);
 
 		// attach failure observer to manage connection and I/O errors
