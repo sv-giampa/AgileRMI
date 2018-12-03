@@ -2,8 +2,6 @@
 This is a Java library useful to create network applications, without socket programming, by
 simply defining the business interfaces of the objects that you want to export on the network.
 
-This library does not strictly implements the Java RMI specifications.
-
 The fundamental advantages of this library are the following:
 - It is full usable in Android and in similar embedded applications.
 - The possibility to export any object remotely, without the requirement of implement a explicitly marked remote interface, as we must do in Java RMI (Applicable to systems that were not thought to be remote);
