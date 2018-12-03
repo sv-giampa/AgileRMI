@@ -1,4 +1,4 @@
-# CoarseRMI Example Application
+# AgileRMI Example Application
 As is usually done in Java RMI, the application is divided in three projects:
 - The Commons project: collects all the interfaces that are shared between client and server;
 - The Server project: implements the Commons' interfaces and provide an implementation of the business services;
