@@ -91,10 +91,9 @@ public class RmiRegistry {
 	 * cryptography and so on (For example, you can use the {@link SSLSocketFactory}
 	 * to reach a good level of cryptography for RMI network communication).
 	 * 
-	 * @throws IOException if an I\O error occurs
 	 */
-	public RmiRegistry() throws IOException {
-		this(0, true, null, null, null, false);
+	public RmiRegistry() {
+		this(null, null, null);
 	}
 
 	/**
@@ -104,10 +103,9 @@ public class RmiRegistry {
 	 * @param filterFactory the {@link FilterFactory} instance that gives the
 	 *                      streams in which the underlying communication streams
 	 *                      will be wrapped in
-	 * @throws IOException if an I\O error occurs
 	 */
-	public RmiRegistry(FilterFactory filterFactory) throws IOException {
-		this(0, true, null, null, filterFactory, false);
+	public RmiRegistry(FilterFactory filterFactory) {
+		this(null, null, filterFactory);
 	}
 
 	/**
@@ -121,11 +119,18 @@ public class RmiRegistry {
 	 * @param filterFactory       the {@link FilterFactory} instance that gives the
 	 *                            streams in which the underlying communication
 	 *                            streams will be wrapped in
-	 * @throws IOException if an I\O error occurs
 	 */
 	public RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			FilterFactory filterFactory) throws IOException {
-		this(0, true, serverSocketFactory, socketFactory, filterFactory, false);
+			FilterFactory filterFactory) {
+		if (serverSocketFactory == null)
+			serverSocketFactory = ServerSocketFactory.getDefault();
+		if (socketFactory == null)
+			socketFactory = SocketFactory.getDefault();
+
+		this.ssFactory = serverSocketFactory;
+		this.sFactory = socketFactory;
+		this.filterFactory = filterFactory;
+		attachFailureObserver(failureObserver);
 	}
 
 	/**
@@ -226,16 +231,7 @@ public class RmiRegistry {
 	 */
 	public RmiRegistry(int port, boolean daemon, ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
 			FilterFactory filterFactory, boolean enableListener) throws IOException {
-		if (serverSocketFactory == null)
-			serverSocketFactory = ServerSocketFactory.getDefault();
-		if (socketFactory == null)
-			socketFactory = SocketFactory.getDefault();
-
-		this.ssFactory = serverSocketFactory;
-		this.sFactory = socketFactory;
-		this.filterFactory = filterFactory;
-		attachFailureObserver(failureObserver);
-
+		this(serverSocketFactory, socketFactory, filterFactory);
 		if (enableListener)
 			enableListener(port, daemon);
 	}
@@ -594,12 +590,13 @@ public class RmiRegistry {
 	}
 
 	/**
-	 * Package-level operation used to send a failure to the failure observers
+	 * Package-level operation used to broadcast a {@link RmiHandler} failure to the
+	 * failure observers
 	 * 
 	 * @param rmiHandler the object peer that caused the failure
 	 * @param exception  the exception thrown by the object peer
 	 */
-	void sendFailure(RmiHandler rmiHandler, Exception exception) {
+	void sendRmiHandlerFailure(RmiHandler rmiHandler, Exception exception) {
 		failureObservers.forEach(o -> {
 			try {
 				o.failure(rmiHandler, exception);
@@ -607,12 +604,6 @@ public class RmiRegistry {
 			}
 		});
 	}
-
-	// search index over identifiers
-	// private Map<String, Object> byId = new HashMap<>();
-
-	// search index over <object,interface> couples
-	// private Map<Object, String> byEntry = new HashMap<>();
 
 	Skeleton getSkeleton(String id) {
 		return skeletonById.get(id);

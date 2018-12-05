@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.NotSerializableException;
 import java.io.OutputStream;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -141,13 +142,53 @@ public class RmiHandler {
 		}
 
 		RemoteException dispositionException = new RemoteException();
-		rmiRegistry.sendFailure(this, dispositionException);
+		rmiRegistry.sendRmiHandlerFailure(this, dispositionException);
 
 		socket = null;
 		out = null;
 		in = null;
 		invocations.clear();
 		invokeQueue.clear();
+	}
+
+	/**
+	 * Check if the given object is a stub created by this handler
+	 * 
+	 * @param obj the object to check
+	 * @return true if the object is a stub created by this handler, false otherwise
+	 */
+	public boolean isMyStub(Object obj) {
+		if (Proxy.isProxyClass(obj.getClass())) {
+			InvocationHandler ih = Proxy.getInvocationHandler(obj);
+			if (ih instanceof RemoteInvocationHandler) {
+				RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
+				return rih.getHandler() == this;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Removes all the objects that are stubs by this handler from the collection
+	 * 
+	 * @param objects collection to analyze
+	 */
+	public void removeMyStubs(Iterable<?> objects) {
+		for (Iterator<?> it = objects.iterator(); it.hasNext();)
+			if (isMyStub(it.next()))
+				it.remove();
+	}
+
+	/**
+	 * Removes all the objects that are not stubs by this handler from the
+	 * collection
+	 * 
+	 * @param objects collection to analyze
+	 */
+	public void retainMyStubs(Iterable<?> objects) {
+		for (Iterator<?> it = objects.iterator(); it.hasNext();)
+			if (!isMyStub(it.next()))
+				it.remove();
 	}
 
 	/**
@@ -344,7 +385,7 @@ public class RmiHandler {
 				} catch (Exception e1) {
 				}
 
-				rmiRegistry.sendFailure(RmiHandler.this, e);
+				rmiRegistry.sendRmiHandlerFailure(RmiHandler.this, e);
 			}
 		}
 	};
@@ -384,7 +425,6 @@ public class RmiHandler {
 								retHandle.returnClass = method.getReturnType();
 
 							} catch (InvocationTargetException e) {
-								System.out.println("exception caught");
 								e.printStackTrace();
 								retHandle.thrownException = e.getCause();
 							} catch (NoSuchMethodException e) {
@@ -464,7 +504,7 @@ public class RmiHandler {
 				} catch (Exception e1) {
 				}
 
-				rmiRegistry.sendFailure(RmiHandler.this, e);
+				rmiRegistry.sendRmiHandlerFailure(RmiHandler.this, e);
 			}
 		}
 	};

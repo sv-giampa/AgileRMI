@@ -90,6 +90,10 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		return objectId;
 	}
 
+	public RmiHandler getHandler() {
+		return handler;
+	}
+
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 
@@ -123,7 +127,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		if (handler.isDisposed()) {
-			throw new RemoteException();
+			if (handler.getRmiRegistry().isRemoteExceptionEnabled())
+				throw new RemoteException();
 		} else {
 
 			handler.putHandle(invocation);
