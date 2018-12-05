@@ -32,21 +32,21 @@ import java.util.Set;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
-
-import agilermi.filter.FilterFactory;
+import javax.net.ssl.SSLSocketFactory;
 
 /**
- * Defines a simple class that accepts new TCP connections over a port of the
- * local machine and automatically creates and manages the object sockets to
- * export remote objects. It integrates a registry of exported objects. The
- * instances of this class can be shared among more than one RmiHandler to
- * obtain a multi-peer interoperability.
+ * Defines a class that accepts new TCP connections over a port of the local
+ * machine and automatically creates and manages the object sockets to export
+ * remote objects. It integrates a registry of exported objects. The instances
+ * of this class can be shared among more than one RmiHandler to obtain a
+ * multi-peer interoperability.
  * 
  * @author Salvatore Giampa'
  *
  */
 public class RmiRegistry {
 
+	// lock for synchronized access to this instance
 	private Object lock = new Object();
 
 	// the server socket used from last call to the start() method
@@ -67,32 +67,70 @@ public class RmiRegistry {
 	// failure observers
 	private Set<FailureObserver> failureObservers = new HashSet<>();
 
-	private boolean dispositionExceptionEnabled = true;
+	private boolean remoteExceptionEnabled = true;
 
 	// automatically referenced interfaces
 	private Set<Class<?>> remotes = new HashSet<>();
 
-	private Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
+	// map: object -> skeleton
+	Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
 
+	// map: identifier -> skeleton
 	private Map<String, Skeleton> skeletonById = new HashMap<>();
 
+	// filter factory used to customize network communication streams
 	private FilterFactory filterFactory;
 
+	/**
+	 * Creates a new simple RmiRegistry instance, without starting its connection
+	 * listener. No other layers are inserted into the communication of
+	 * {@link RmiHandler} instances, just a plain, object based communication will
+	 * be established. See other constructors of this class (e.g.
+	 * {@link #RmiRegistry(int, boolean, ServerSocketFactory, SocketFactory, FilterFactory, boolean)})
+	 * to add some other communication layers, such as compression, authentication,
+	 * cryptography and so on (For example, you can use the {@link SSLSocketFactory}
+	 * to reach a good level of cryptography for RMI network communication).
+	 * 
+	 * @throws IOException if an I\O error occurs
+	 */
 	public RmiRegistry() throws IOException {
 		this(0, true, null, null, null, false);
 	}
 
+	/**
+	 * Creates a new RmiRegistry with the given FilterFactory instance, without
+	 * starting its connection listener in a daemon thread.
+	 * 
+	 * @param filterFactory the {@link FilterFactory} instance that gives the
+	 *                      streams in which the underlying communication streams
+	 *                      will be wrapped in
+	 * @throws IOException if an I\O error occurs
+	 */
 	public RmiRegistry(FilterFactory filterFactory) throws IOException {
 		this(0, true, null, null, filterFactory, false);
 	}
 
-	public RmiRegistry(ServerSocketFactory ssFactory, SocketFactory socketFactory, FilterFactory filterFactory)
-			throws IOException {
-		this(0, true, ssFactory, socketFactory, filterFactory, false);
+	/**
+	 * Creates a new RmiRegistry with the given ServerSocketFactory, SocketFactory
+	 * and FilterFactory instances, without starting the connection listener.
+	 * 
+	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
+	 *                            build the listener server socket
+	 * @param socketFactory       the {@link SocketFactory} instance to use to build
+	 *                            client sockets
+	 * @param filterFactory       the {@link FilterFactory} instance that gives the
+	 *                            streams in which the underlying communication
+	 *                            streams will be wrapped in
+	 * @throws IOException if an I\O error occurs
+	 */
+	public RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
+			FilterFactory filterFactory) throws IOException {
+		this(0, true, serverSocketFactory, socketFactory, filterFactory, false);
 	}
 
 	/**
-	 * Creates a new Object server with a new empty object registry
+	 * Creates a new RmiRegistry and automatically starts its connection listener on
+	 * the given port in a daemon thread.
 	 * 
 	 * @param port the port to listen on
 	 * @throws IOException if an I\O error occurs
@@ -102,59 +140,99 @@ public class RmiRegistry {
 	}
 
 	/**
+	 * Creates a new RmiRegistry and automatically starts its connection listener on
+	 * the given port.
 	 * 
-	 * @param port
-	 * @param daemon
-	 * @throws IOException
+	 * @param port   the port to listen on
+	 * @param daemon set the daemon flag of the listener thread. See
+	 *               {@link Thread#setDaemon(boolean)} for more details.
+	 * @throws IOException if an I\O error occurs
 	 */
 	public RmiRegistry(int port, boolean daemon) throws IOException {
 		this(port, daemon, null, null, null, true);
 	}
 
 	/**
+	 * Creates a new RmiRegistry and automatically starts its connection listener on
+	 * the given port.
 	 * 
-	 * @param port
-	 * @param daemon
-	 * @throws IOException
+	 * @param port          the port to listen on
+	 * @param daemon        set the daemon flag of the listener thread. See
+	 *                      {@link Thread#setDaemon(boolean)} for more details.
+	 * @param filterFactory the {@link FilterFactory} instance that gives the
+	 *                      streams in which the underlying communication
+	 * @throws IOException if an I/O error occurs
 	 */
 	public RmiRegistry(int port, boolean daemon, FilterFactory filterFactory) throws IOException {
 		this(port, daemon, null, null, filterFactory, true);
 	}
 
 	/**
-	 * Creates a new Object server with a new empty object registry
+	 * Creates a new RmiRegistry with the specified {@link FilterFactory} and
+	 * automatically starts its connection listener on the given port in a daemon
+	 * thread.
 	 * 
-	 * @param port the port to listen on
+	 * @param port          the port to listen on
+	 * @param filterFactory the {@link FilterFactory} instance that gives the
+	 *                      streams in which the underlying communication
 	 * @throws IOException if an I\O error occurs
 	 */
 	public RmiRegistry(int port, FilterFactory filterFactory) throws IOException {
 		this(port, true, null, null, filterFactory, true);
 	}
 
-	public RmiRegistry(int port, boolean daemon, ServerSocketFactory ssFactory, SocketFactory sFactory,
+	/**
+	 * Creates a new RmiRegistry with the specified {@link FilterFactory} and
+	 * automatically starts its connection listener on the given port in a daemon
+	 * thread.
+	 * 
+	 * @param port                the port to listen on
+	 * @param daemon              set the daemon flag of the listener thread. See
+	 *                            {@link Thread#setDaemon(boolean)} for more
+	 *                            details.
+	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
+	 *                            build the listener server socket
+	 * @param socketFactory       the {@link SocketFactory} instance to use to build
+	 *                            client sockets
+	 * @param filterFactory       the {@link FilterFactory} instance that gives the
+	 *                            streams in which the underlying communication
+	 *                            streams will be wrapped in
+	 * @throws IOException if an I\O error occurs
+	 */
+	public RmiRegistry(int port, boolean daemon, ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
 			FilterFactory filterFactory) throws IOException {
-		this(port, daemon, ssFactory, sFactory, filterFactory, true);
+		this(port, daemon, serverSocketFactory, socketFactory, filterFactory, true);
 	}
 
 	/**
 	 * 
-	 * Creates a new Object server with a new empty object registry
+	 * Creates a new RmiRegistry. This constructor allows to reach the maximum
+	 * customization degree of network communication offered by Agile RMI.
 	 * 
-	 * @param port      the port to listen on
-	 * @param daemon    set to false to create a non-daemon listener thread (shuts
-	 *                  down when all the application is terminated)
-	 * @param ssFactory a custom factory to create server sockets
+	 * @param port                the port to listen on
+	 * @param daemon              set the daemon flag of the listener thread. See
+	 *                            {@link Thread#setDaemon(boolean)} for more
+	 *                            details.
+	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
+	 *                            build the listener server socket
+	 * @param socketFactory       the {@link SocketFactory} instance to use to build
+	 *                            client sockets
+	 * @param filterFactory       the {@link FilterFactory} instance that gives the
+	 *                            streams in which the underlying communication
+	 *                            streams will be wrapped in
+	 * @param enableListener      set this to true to start the connection listener
+	 *                            after construction, set to false otherwise
 	 * @throws IOException if an I\O error occurs
 	 */
-	public RmiRegistry(int port, boolean daemon, ServerSocketFactory ssFactory, SocketFactory sFactory,
+	public RmiRegistry(int port, boolean daemon, ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
 			FilterFactory filterFactory, boolean enableListener) throws IOException {
-		if (ssFactory == null)
-			ssFactory = ServerSocketFactory.getDefault();
-		if (sFactory == null)
-			sFactory = SocketFactory.getDefault();
+		if (serverSocketFactory == null)
+			serverSocketFactory = ServerSocketFactory.getDefault();
+		if (socketFactory == null)
+			socketFactory = SocketFactory.getDefault();
 
-		this.ssFactory = ssFactory;
-		this.sFactory = sFactory;
+		this.ssFactory = serverSocketFactory;
+		this.sFactory = socketFactory;
 		this.filterFactory = filterFactory;
 		attachFailureObserver(failureObserver);
 
@@ -162,6 +240,11 @@ public class RmiRegistry {
 			enableListener(port, daemon);
 	}
 
+	/**
+	 * Finalizes this registry instance and all its current open connections. This
+	 * method is also called by the Garbage Collector when the registry is no longer
+	 * referenced
+	 */
 	@Override
 	public synchronized void finalize() {
 		detachFailureObserver(failureObserver);
@@ -172,15 +255,15 @@ public class RmiRegistry {
 
 	/**
 	 * Gets the stub for the specified object identifier on the specified host
-	 * respect to the given interface. Similar to the
-	 * {@link RmiHandler#getStub(String, Class)} method, but creates a new
-	 * ObjectPeer if necessary to communicate with the specified host.
+	 * respect to the given interface. This method creates a new {@link RmiHandler}
+	 * if necessary to communicate with the specified host. The new
+	 * {@link RmiHandler} can be obtained by calling the
+	 * {@link #getRmiHandler(String, int)} method.
 	 * 
-	 * @param address       the host address
-	 * @param port          the host port
-	 * @param objectId      the remote object identifier
-	 * @param stubInterface the stub's interface
-	 * @param               <T> type of the stub object
+	 * @param address        the host address
+	 * @param port           the host port
+	 * @param objectId       the remote object identifier
+	 * @param stubInterfaces the interfaces implemented by the stub
 	 * @return the stub object
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
@@ -196,8 +279,8 @@ public class RmiRegistry {
 	 * Gets the {@link RmiHandler} object for the specified host. If it has not been
 	 * created, creates it.
 	 * 
-	 * @param address the host address
-	 * @param port    the host port
+	 * @param host the host address
+	 * @param port the host port
 	 * @return the object peer related to the specified host
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
@@ -210,7 +293,7 @@ public class RmiRegistry {
 			List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
 			RmiHandler rmiHandler = null;
 			if (rmiHandlers.size() == 0)
-				rmiHandlers.add(rmiHandler = RmiHandler.connect(host, port, this, sFactory, filterFactory));
+				rmiHandlers.add(rmiHandler = new RmiHandler(sFactory.createSocket(host, port), this, filterFactory));
 			else
 				rmiHandler = rmiHandlers.get((int) (Math.random() * rmiHandlers.size()));
 			return rmiHandler;
@@ -227,42 +310,40 @@ public class RmiRegistry {
 	 *               will bterminated.
 	 * @throws IOException if I/O errors occur
 	 */
-	public synchronized void enableListener(int port, boolean daemon) throws IOException {
-		if (listener != null)
-			stopListener();
-		serverSocket = ssFactory.createServerSocket(port);
-		this.port = serverSocket.getLocalPort();
-		listener = new Thread(listenerTask);
-		listener.setDaemon(daemon);
-		listener.start();
+	public void enableListener(int port, boolean daemon) throws IOException {
+		synchronized (lock) {
+			if (listener != null)
+				disableListener();
+			serverSocket = ssFactory.createServerSocket(port);
+			this.port = serverSocket.getLocalPort();
+			listener = new Thread(listenerTask);
+			listener.setDaemon(daemon);
+			listener.start();
+		}
 	}
 
 	/**
 	 * Disable the registry listener. This method will disallow the registry to
 	 * accept new incoming connections, but does not close the current open ones.
 	 */
-	private synchronized void stopListener() {
-		if (listener == null)
-			return;
+	public void disableListener() {
+		synchronized (lock) {
+			if (listener == null)
+				return;
 
-		listener.interrupt();
-		listener = null;
-		try {
-			serverSocket.close();
-		} catch (IOException e) {
-			e.printStackTrace();
+			listener.interrupt();
+			listener = null;
+			try {
+				serverSocket.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
 		}
-
-		/*
-		 * for (RmiHandler socket : sockets) socket.dispose();
-		 * 
-		 * sockets.clear();
-		 */
 	}
 
 	/**
 	 * Defines the main thread that accepts new incoming connections and creates
-	 * {@link ObjectPeer} objects
+	 * {@link RmiHandler} objects
 	 */
 	private Runnable listenerTask = new Runnable() {
 		@Override
@@ -299,17 +380,24 @@ public class RmiRegistry {
 	// search index over <object,interface> couples
 	// private Map<Object, String> byEntry = new HashMap<>();
 
-	public void setDispositionExceptionEnabled(boolean dispositionExceptionEnabled) {
-		this.dispositionExceptionEnabled = dispositionExceptionEnabled;
+	/**
+	 * Enables the stubs for remote objects to throw a {@link RemoteException} when
+	 * their {@link RmiHandler} will be disposed
+	 * 
+	 * @param enable set this to true to enable the exception, set to false
+	 *               otherwise
+	 */
+	public void enableRemoteException(boolean enable) {
+		this.remoteExceptionEnabled = enable;
 	}
 
 	/**
-	 * Gets the enable status of the disposition exception
+	 * Gets the enable status of the {@link RemoteException}
 	 * 
-	 * @return
+	 * @return true if {@link RemoteException} is enabled, false otherwise
 	 */
-	public boolean isDispositionExceptionEnabled() {
-		return dispositionExceptionEnabled;
+	public boolean isRemoteExceptionEnabled() {
+		return remoteExceptionEnabled;
 	}
 
 	/**
@@ -317,74 +405,45 @@ public class RmiRegistry {
 	 * 
 	 * @param objectId the identifier to use for this service
 	 * @param object   the implementation of the service to publish
-	 * @param remoteIf the interface of the service to publish
 	 * @throws IllegalArgumentException if the specified identifier was already
 	 *                                  bound or if the objectId parameter matches
 	 *                                  the automatic referencing objectId pattern
 	 *                                  that is /\#[0-9]+/
 	 */
-	public synchronized void publish(String id, Object object) {
-		// if (byId.get(id) == object)
-		// return;
-		// if (byId.containsKey(id) && byId.get(id) != object)
-		// throw new IllegalArgumentException("the given objectId '" + id + "' is
-		// already bound.");
-		if (id.startsWith("#"))
-			throw new IllegalArgumentException(
-					"The used identifier pattern /\\#.*/ is reserved to atomatic referencing. Please use another identifier pattern.");
-
-		/*
-		 * if(byEntry.containsKey(object)) { String otherId = byEntry.get(object);
-		 * byId.remove(otherId); }
-		 */
-		// byEntry.put(object, id);
-		// byId.put(id, object);
+	public synchronized void publish(String objectId, Object object) {
+		if (objectId.startsWith(Skeleton.IDENTIFIER_PREFIX))
+			throw new IllegalArgumentException("The used identifier prefix '" + Skeleton.IDENTIFIER_PREFIX
+					+ "' is reserved to atomatic referencing. Please use another identifier pattern.");
 
 		Skeleton sk = null;
 		if (skeletonByObject.containsKey(object)) {
 			sk = skeletonByObject.get(object);
 
-			if (skeletonById.containsKey(id) && skeletonById.get(id) != sk)
-				throw new IllegalArgumentException("the given object name '" + id + "' is already bound.");
+			if (skeletonById.containsKey(objectId) && skeletonById.get(objectId) != sk)
+				throw new IllegalArgumentException("the given object name '" + objectId + "' is already bound.");
 
 			if (sk.getObject() != object)
 				throw new IllegalStateException(
 						"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
 		} else {
-			if (skeletonById.containsKey(id))
-				throw new IllegalArgumentException("the given object name '" + id + "' is already bound.");
+			if (skeletonById.containsKey(objectId))
+				throw new IllegalArgumentException("the given object name '" + objectId + "' is already bound.");
 			sk = new Skeleton(object, this);
 			skeletonById.put(sk.getId(), sk);
 			skeletonByObject.put(object, sk);
 		}
-		skeletonById.put(id, sk);
-		sk.addNames(id);
-
-		/*
-		 * if (idByName.containsKey(name)) throw new
-		 * IllegalArgumentException("the given object name '" + name +
-		 * "' is already bound.");
-		 */
-
+		skeletonById.put(objectId, sk);
+		sk.addNames(objectId);
 	}
 
 	/**
 	 * Publish the given object respect to the specified interface. The identifier
 	 * is automatically generated and returnedCondition
 	 * 
-	 * @param object   the implementation of the service to publish
-	 * @param remoteIf the interface of the service to publish
+	 * @param object the implementation of the service to publish
 	 * @return the generated identifier
 	 */
 	public synchronized String publish(Object object) {
-//		if (byEntry.containsKey(object)) {
-//			return byEntry.get(object);
-//		}
-//
-//		String id = "#" + String.valueOf(nextId++); // objectId pattern: /\#[0-9]+/
-//		byEntry.put(object, id);
-//		byId.put(id, object);
-
 		if (skeletonByObject.containsKey(object)) {
 			Skeleton sk = skeletonByObject.get(object);
 			if (sk.getObject() != object)
@@ -402,55 +461,47 @@ public class RmiRegistry {
 	/**
 	 * Unpublish an object respect to the given interface
 	 * 
-	 * @param object   the implementation to unpublish
-	 * @param remoteIf the interface respect to unpublish
+	 * @param object the object to unpublish
 	 */
 	public synchronized void unpublish(Object object) {
-
 		Skeleton skeleton = skeletonByObject.remove(object);
 		if (skeleton != null) {
 			skeletonById.remove(skeleton.getId());
 			for (String id : skeleton.names())
 				skeletonById.remove(id);
 		}
-
-//		String id = byEntry.remove(object);
-//		if (id != null)
-//			byId.remove(id);
 	}
 
 	/**
-	 * Unpublish the service with the specified identifier
+	 * Unpublish the remote object that is associated to the given identifier
 	 * 
-	 * @param objectId the objectId of the service
+	 * @param objectId the object identifier of the remote object
 	 */
-	public synchronized void unpublish(String id) {
-//		if (id.matches("\\#[0-9]+"))
-//			throw new IllegalArgumentException(
-//					"The used identifier pattern /\\#[0-9]+/ is reserved to atomatic referencing. Please use another identifier pattern.");
-//		Object entry = byId.remove(id);
-//		if (entry != null)
-//			byEntry.remove(entry);
-
-		Skeleton skeleton = skeletonById.remove(id);
-		if (skeleton != null) {
-			skeletonByObject.remove(skeleton.getObject());
-			for (String name : skeleton.names())
-				skeletonById.remove(name);
+	public synchronized void unpublish(String objectId) {
+		synchronized (lock) {
+			Skeleton skeleton = skeletonById.remove(objectId);
+			if (skeleton != null) {
+				skeletonByObject.remove(skeleton.getObject());
+				for (String name : skeleton.names())
+					skeletonById.remove(name);
+			}
 		}
 	}
 
 	/**
-	 * Attach a {@link FailureObserver} object.
+	 * Attach a {@link FailureObserver} object
 	 * 
 	 * @param o the failure observer
 	 */
 	public synchronized void attachFailureObserver(FailureObserver o) {
+		synchronized (o) {
+
+		}
 		failureObservers.add(o);
 	}
 
 	/**
-	 * Detach a {@link FailureObserver} object.
+	 * Detach a {@link FailureObserver} object
 	 * 
 	 * @param o the failure observer
 	 */
@@ -459,13 +510,13 @@ public class RmiRegistry {
 	}
 
 	/**
-	 * Package-level operation used to get an object by identifier
+	 * Gets a published remote object by identifier
 	 * 
-	 * @param objectId
+	 * @param objectId object identifier
 	 * @return the remotized object
 	 */
-	public synchronized Object getRemoteObject(String id) {
-		Skeleton skeleton = skeletonById.get(id);
+	public synchronized Object getRemoteObject(String objectId) {
+		Skeleton skeleton = skeletonById.get(objectId);
 		if (skeleton != null)
 			return skeleton.getObject();
 		else
@@ -473,10 +524,9 @@ public class RmiRegistry {
 	}
 
 	/**
-	 * Package-level operation used to get the identifier of a service
+	 * Gets the identifier of a remote object published on this registry
 	 * 
-	 * @param object   the service implementation
-	 * @param remoteIf the service interface
+	 * @param object the published object reference
 	 * @return the associated identifier or null if no entry was found
 	 */
 	public synchronized String getRemoteObjectId(Object object) {
@@ -499,16 +549,14 @@ public class RmiRegistry {
 	public synchronized void exportInterface(Class<?> remoteIf) {
 		if (remoteIf == Remote.class)
 			throw new IllegalArgumentException("agilermi.Remote interface cannot be exported!");
-		/*
-		 * if (!remoteIf.isInterface()) throw new
-		 * IllegalArgumentException("the specified class is not an interface");
-		 */
+		if (!remoteIf.isInterface())
+			throw new IllegalArgumentException("the specified class is not an interface");
 		remotes.add(remoteIf);
 	}
 
 	/**
 	 * Remove a automatic referencing mark for the interface. See the
-	 * {@link ObjectRegistry#exportInterface(Class)} method. All the objects
+	 * {@link RmiRegistry#exportInterface(Class)} method. All the objects
 	 * automatically referenced until this call, remains published in the registry.
 	 * 
 	 * @param remoteIf the interface to unmark
@@ -522,7 +570,7 @@ public class RmiRegistry {
 
 	/**
 	 * Check if an interface is marked for automatic referencing. See the
-	 * {@link ObjectRegistry#exportInterface(Class)} method.
+	 * {@link RmiRegistry#exportInterface(Class)} method.
 	 * 
 	 * @param remoteIf the interface to check
 	 * @return true if the interface is marked for automatic referencing, false

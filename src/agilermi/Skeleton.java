@@ -27,7 +27,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+/**
+ * Represents a local remote object exposed by a local {@link RmiRegistry}
+ * instance on the network. An instance of this class is proxy for a remote
+ * object. Instances of this class count the remote references to a remote
+ * object and act the local garbage collection mechanism. This is the main
+ * component used to act the distributed garbage collection.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 class Skeleton {
+	public static String IDENTIFIER_PREFIX = "###";
 	private static long nextId = 0;
 
 	private RmiRegistry rmiRegistry;
@@ -37,17 +48,17 @@ class Skeleton {
 	private String id;
 	private Set<String> names = new TreeSet<>();
 
-	public Skeleton(Object object, RmiRegistry rmiRegistry) {
-		id = "#" + (nextId++);
+	Skeleton(Object object, RmiRegistry rmiRegistry) {
+		id = IDENTIFIER_PREFIX + (nextId++);
 		this.object = object;
 		this.rmiRegistry = rmiRegistry;
 	}
 
-	public int getRefGlobalCounter() {
+	int getRefGlobalCounter() {
 		return refGlobalCounter;
 	}
 
-	public synchronized void removeRef(RmiHandler rmiHandler) {
+	synchronized void removeRef(RmiHandler rmiHandler) {
 		Integer count = refCounters.get(rmiHandler);
 		if (count == null)
 			return;
@@ -58,7 +69,7 @@ class Skeleton {
 		scheduleRemove();
 	}
 
-	public synchronized void addRef(RmiHandler rmiHandler) {
+	synchronized void addRef(RmiHandler rmiHandler) {
 		Integer count = refCounters.get(rmiHandler);
 		if (count == null)
 			refCounters.put(rmiHandler, 1);
@@ -69,48 +80,55 @@ class Skeleton {
 		refGlobalCounter++;
 	}
 
-	public synchronized void removeAllRefs(RmiHandler rmiHandler) {
+	synchronized void removeAllRefs(RmiHandler rmiHandler) {
 		Integer count = refCounters.remove(rmiHandler);
 		refGlobalCounter -= count;
 		scheduleRemove();
 	}
 
-	private void scheduleRemove() {
-		if (refGlobalCounter == 0 && names.isEmpty())
-			new Thread(() -> {
+	private Thread scheduledRemove = null;
+
+	private synchronized void scheduleRemove() {
+		if (refGlobalCounter == 0 && names.isEmpty()) {
+			if (scheduledRemove != null)
+				scheduledRemove.interrupt();
+			scheduledRemove = new Thread(() -> {
 				try {
 					Thread.sleep(10000);
 				} catch (InterruptedException e) {
-					e.printStackTrace();
+					return;
 				}
-				synchronized (this) {
-					if (refGlobalCounter == 0 && names.isEmpty())
+				synchronized (Skeleton.this) {
+					if (refGlobalCounter == 0 && names.isEmpty()) {
 						rmiRegistry.unpublish(object);
+					}
 				}
-			}).start();
+			});
+			scheduledRemove.start();
+		}
 	}
 
-	public void addNames(String name) {
+	void addNames(String name) {
 		names.add(name);
 	}
 
-	public void removeNames(String name) {
+	void removeNames(String name) {
 		names.remove(name);
 	}
 
-	public Set<String> names() {
+	Set<String> names() {
 		return Collections.unmodifiableSet(names);
 	}
 
-	public Object getObject() {
+	Object getObject() {
 		return object;
 	}
 
-	public String getId() {
+	String getId() {
 		return id;
 	}
 
-	public Object invoke(String method, Class<?>[] parameterTypes, Object[] parameters) throws IllegalAccessException,
+	Object invoke(String method, Class<?>[] parameterTypes, Object[] parameters) throws IllegalAccessException,
 			IllegalArgumentException, InvocationTargetException, NoSuchMethodException, SecurityException {
 
 		if (method.equals("equals") && parameters.length == 1 && Proxy.isProxyClass(parameters[0].getClass())) {

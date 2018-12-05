@@ -28,7 +28,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -40,8 +39,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 
 import javax.net.SocketFactory;
-
-import agilermi.filter.FilterFactory;
 
 /**
  * 
@@ -85,152 +82,17 @@ public class RmiHandler {
 
 	private RmiRegistry rmiRegistry;
 
-	/**
-	 * Map for invocations that are waiting a response
-	 */
+	// Map for invocations that are waiting a response
 	private Map<Long, InvocationHandle> invocations = Collections.synchronizedMap(new HashMap<>());
 
-	/**
-	 * The queue for buffered invocations that are ready to be sent over the socket
-	 */
+	// The queue for buffered invocations that are ready to be sent over the socket
 	private BlockingQueue<Handle> invokeQueue = new ArrayBlockingQueue<>(200);
 
-	/**
-	 * Flag that indicates if this ObjectPeer has been disposed. When
-	 */
+	// Flag that indicates if this RmiHandler has been disposed.
 	private boolean disposed = false;
 
+	// remote references requested by the other machine
 	private Set<String> references = new TreeSet<>();
-
-	/**
-	 * Implements the flyweight pattern for stubs creation
-	 */
-	// private Map<StubKey, Object> stubFlyweight = Collections.synchronizedMap(new
-	// HashMap<>());
-
-	/**
-	 * Connects to the selected address and port and creates a new ObjectPeer over
-	 * that connection, with a new empty {@link ObjectRegistry}
-	 * 
-	 * @param address the address of the object server
-	 * @param port    the port of the object server
-	 * @return the ObjectPeer object representing the remote object server
-	 * @throws UnknownHostException if the host cannot be found
-	 * @throws IOException          if an I/O error occurs
-	 */
-	public static RmiHandler connect(String address, int port) throws UnknownHostException, IOException {
-		return connect(address, port, new RmiRegistry(), null, null);
-	}
-
-	/**
-	 * Connects to the selected address and port and creates a new RmiHandler over
-	 * that connection, with the specified {@link RmiRegistry}
-	 * 
-	 * @param address     the address of the object server
-	 * @param port        the port of the object server
-	 * @param rmiRegistry the rmiRegistry that must be used by the RmiHandler
-	 * @return the RmiHandler object representing the remote object server
-	 * @throws UnknownHostException if the host cannot be found
-	 * @throws IOException          if an I/O error occurs
-	 */
-	public static RmiHandler connect(String address, int port, RmiRegistry rmiRegistry, SocketFactory sFactory,
-			FilterFactory filterFactory) throws UnknownHostException, IOException {
-		Socket socket = null;
-		if (sFactory != null)
-			socket = sFactory.createSocket(address, port);
-		else
-			socket = new Socket(address, port);
-		return new RmiHandler(socket, rmiRegistry, filterFactory);
-	}
-
-	/**
-	 * Constructs a new RmiHandler over the connection specified by the given
-	 * socket, with the specified {@link RmiRegistry}.
-	 * 
-	 * @param socket      the socket over which the ObjectPeer will be created
-	 * @param rmiRegistry the {@link ObjectRegistry} to use
-	 * @see RmiHandler#connect(String, int, RmiRegistry, SocketFactory,
-	 *      FilterFactory)
-	 * @see RmiHandler#connect(String, int)
-	 * @throws IOException if an I/O error occurs
-	 */
-	public RmiHandler(Socket socket, RmiRegistry registry) throws IOException {
-		this(socket, registry, null);
-	}
-
-	/**
-	 * Constructs a new RmiHandler over the connection specified by the given
-	 * socket, with the specified {@link RmiRegistry}.
-	 * 
-	 * @param socket        the socket over which the ObjectPeer will be created
-	 * @param rmiRegistry   the {@link ObjectRegistry} to use
-	 * @param filterFactory a {@link FilterFactory} that allows to add communication
-	 *                      levels, such as levels for cryptography or data
-	 *                      compression
-	 * @see RmiHandler#connect(String, int, RmiRegistry, SocketFactory,
-	 *      FilterFactory)
-	 * @see RmiHandler#connect(String, int)
-	 * @throws IOException if an I/O error occurs
-	 */
-	@SuppressWarnings("resource")
-	public RmiHandler(Socket socket, RmiRegistry rmiRegistry, FilterFactory filterFactory) throws IOException {
-		inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
-		this.socket = socket;
-		this.rmiRegistry = rmiRegistry;
-
-		OutputStream output = new BufferedOutputStream(socket.getOutputStream(), 512);
-		InputStream input = new BufferedInputStream(socket.getInputStream(), 512);
-
-		if (filterFactory != null) {
-			output = filterFactory.buildOutputStream(output);
-			input = filterFactory.buildInputStream(input);
-		}
-
-		out = new RmiObjectOutputStream(output, rmiRegistry);
-		out.flush();
-
-		in = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress);
-
-		receiver.setDaemon(true);
-		sender.setDaemon(true);
-		receiver.start();
-		sender.start();
-	}
-
-	/**
-	 * Gets a stub for the specified object identifier respect to the specified
-	 * interface, representing a remote object on the object server. This method
-	 * performs no network operation, just creates the stub. All the interfaces
-	 * passed must be visible in the class loader of the first interface.
-	 * 
-	 * @param objectId       the object identifier
-	 * @param stubInterfaces the interface whose methods must be stubbed, that is
-	 *                       the interface used to access the remote object
-	 *                       operations
-	 * @param                <T> the stub interface type
-	 * @return A dynamic proxy object that represents the remote instance. It is an
-	 *         instance for the specified stub interface
-	 */
-	public synchronized Object getStub(String objectId, Class<?>... stubInterfaces) {
-		if (disposed)
-			throw new IllegalStateException("This RmiHandler has been disposed");
-		if (stubInterfaces.length == 0)
-			throw new IllegalArgumentException("No interface has been passed");
-
-		Object stub;
-		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
-				new RemoteInvocationHandler(objectId, this));
-		return stub;
-	}
-
-	/**
-	 * Gets the rmiRegistry used by this ObjectPeer
-	 * 
-	 * @return the rmiRegistry used by this peer
-	 */
-	public RmiRegistry getObjectContext() {
-		return rmiRegistry;
-	}
 
 	/**
 	 * Gets the remote connection details of this peer
@@ -242,13 +104,10 @@ public class RmiHandler {
 	}
 
 	/**
-	 * Dispose this ObjectPeer and frees all the used resources and threads. After
-	 * the call to this method, the call to the
-	 * {@link RmiHandler#getStub(String, Class)} method will result in an
-	 * {@link IllegalStateException} and all the stubs generated by this
-	 * {@link RmiHandler} object will not function properly. A call to this method
-	 * cause a callback on the failure observers attached to the rmiRegistry sending
-	 * them an instance of {@link RmiDispositionException}
+	 * Dispose this {@link RmiHandler} and frees all the used resources and threads.
+	 * A call to this method cause a callback on the failure observers attached to
+	 * the {@link RmiRegistry} associated to this instance sending them an instance
+	 * of {@link RemoteException}
 	 */
 	public synchronized void dispose() {
 		if (disposed)
@@ -281,7 +140,7 @@ public class RmiHandler {
 			}
 		}
 
-		RmiDispositionException dispositionException = new RmiDispositionException();
+		RemoteException dispositionException = new RemoteException();
 		rmiRegistry.sendFailure(this, dispositionException);
 
 		socket = null;
@@ -291,15 +150,6 @@ public class RmiHandler {
 		invokeQueue.clear();
 	}
 
-	private void forceInvocationReturn(InvocationHandle invocation) {
-		synchronized (invocation) {
-			if (rmiRegistry.isDispositionExceptionEnabled())
-				invocation.thrownException = new RmiDispositionException();
-			invocation.returned = true;
-			invocation.notifyAll();
-		}
-	}
-
 	/**
 	 * Gets the disposed status of this peer
 	 * 
@@ -307,6 +157,109 @@ public class RmiHandler {
 	 */
 	public boolean isDisposed() {
 		return disposed;
+	}
+
+	/**
+	 * Constructs a new RmiHandler over the connection specified by the given
+	 * socket, with the specified {@link RmiRegistry}.
+	 * 
+	 * @param socket      the socket over which the {@link RmiHandler} will be
+	 *                    created
+	 * @param rmiRegistry the {@link RmiRegistry} to use
+	 * @see RmiHandler#connect(String, int, RmiRegistry, SocketFactory,
+	 *      FilterFactory)
+	 * @see RmiHandler#connect(String, int)
+	 * @throws IOException if an I/O error occurs
+	 */
+	RmiHandler(Socket socket, RmiRegistry registry) throws IOException {
+		this(socket, registry, null);
+	}
+
+	/**
+	 * Constructs a new RmiHandler over the connection specified by the given
+	 * socket, with the specified {@link RmiRegistry}.
+	 * 
+	 * @param socket        the socket over which the {@link RmiHandler} will be
+	 *                      created
+	 * @param rmiRegistry   the {@link RmiRegistry} to use
+	 * @param filterFactory a {@link FilterFactory} that allows to add communication
+	 *                      levels, such as levels for cryptography or data
+	 *                      compression
+	 * @see RmiHandler#connect(String, int, RmiRegistry, SocketFactory,
+	 *      FilterFactory)
+	 * @see RmiHandler#connect(String, int)
+	 * @throws IOException if an I/O error occurs
+	 */
+	@SuppressWarnings("resource")
+	RmiHandler(Socket socket, RmiRegistry rmiRegistry, FilterFactory filterFactory) throws IOException {
+		inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
+		this.socket = socket;
+		this.rmiRegistry = rmiRegistry;
+
+		OutputStream output = new BufferedOutputStream(socket.getOutputStream(), 256);
+		InputStream input = new BufferedInputStream(socket.getInputStream(), 256);
+
+		// OutputStream output = socket.getOutputStream();
+		// InputStream input = socket.getInputStream();
+
+		if (filterFactory != null) {
+			output = filterFactory.buildOutputStream(output);
+			input = filterFactory.buildInputStream(input);
+		}
+
+		out = new RmiObjectOutputStream(output, rmiRegistry);
+		out.flush();
+
+		in = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress);
+
+		receiver.setDaemon(true);
+		sender.setDaemon(true);
+		receiver.start();
+		sender.start();
+	}
+
+	/**
+	 * Gets a stub for the specified object identifier respect to the specified
+	 * interface, representing a remote object on the object server. This method
+	 * performs no network operation, just creates the stub. All the interfaces
+	 * passed must be visible in the class loader of the first interface.
+	 * 
+	 * @param objectId       the object identifier
+	 * @param stubInterfaces the interface whose methods must be stubbed, that is
+	 *                       the interface used to access the remote object
+	 *                       operations
+	 * @param                <T> the stub interface type
+	 * @return A dynamic proxy object that represents the remote instance. It is an
+	 *         instance for the specified stub interface
+	 */
+	synchronized Object getStub(String objectId, Class<?>... stubInterfaces) {
+		if (disposed)
+			throw new IllegalStateException("This RmiHandler has been disposed");
+		if (stubInterfaces.length == 0)
+			throw new IllegalArgumentException("No interface has been passed");
+
+		Object stub;
+		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
+				new RemoteInvocationHandler(objectId, this));
+		return stub;
+	}
+
+	/**
+	 * Gets the rmiRegistry used by this {@link RmiHandler}
+	 * 
+	 * @return the rmiRegistry used by this peer
+	 */
+	RmiRegistry getRmiRegistry() {
+		return rmiRegistry;
+	}
+
+	private void forceInvocationReturn(InvocationHandle invocation) {
+		synchronized (invocation) {
+			if (rmiRegistry.isRemoteExceptionEnabled())
+				invocation.thrownException = new RemoteException();
+			invocation.returned = true;
+			invocation.notifyAll();
+		}
 	}
 
 	/**
@@ -497,8 +450,7 @@ public class RmiHandler {
 					}
 
 				}
-			} catch (Exception e) { // something gone wrong, destroy the
-									// ObjectPeer
+			} catch (Exception e) { // something gone wrong, destroy this handler and dispose it
 
 				e.printStackTrace();
 

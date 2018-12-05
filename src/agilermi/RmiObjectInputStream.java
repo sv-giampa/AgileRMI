@@ -26,7 +26,11 @@ import java.net.InetSocketAddress;
 
 /**
  * This class extends the standard {@link ObjectInputStream} to give an object
- * context to the deserializing {@link RemoteInvocationHandler} instances.
+ * context to the deserializing {@link RemoteInvocationHandler} instances. This
+ * class is the left ventricle of the heart of the deep remote referencing
+ * mechanism, that replaces all the remote object references with their remote
+ * stub, when they are sent on the network. Its counterpart is the
+ * {@link RmiObjectInputStream} class.
  * 
  * @author Salvatore Giampa'
  *
@@ -54,7 +58,7 @@ class RmiObjectInputStream extends ObjectInputStream {
 		this.enableResolveObject(true);
 	}
 
-	public RmiRegistry getObjectContext() {
+	public RmiRegistry getRmiRegistry() {
 		return rmiRegistry;
 	}
 

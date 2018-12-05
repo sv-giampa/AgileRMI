@@ -32,6 +32,7 @@ public interface FailureObserver {
 	 * 
 	 * @param rmiHandler the disposed {@link RmiHandler} object
 	 * @param exception  the thrown exception
+	 * @throws Throwable if the underlying implementation throws something
 	 */
 	void failure(RmiHandler rmiHandler, Exception exception) throws Throwable;
 }

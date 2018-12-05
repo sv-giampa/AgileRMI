@@ -17,10 +17,18 @@
 
 package agilermi;
 
+/**
+ * This class represents finalization messages sent by
+ * {@link RemoteInvocationHandler} instances to their skeleton, to act the
+ * distributed garbage collection mechanism
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 class FinalizeHandle implements Handle {
 	private static final long serialVersionUID = 6485937225497004801L;
 
-	public final String objectId;
+	public String objectId;
 
 	public FinalizeHandle(String objectId) {
 		this.objectId = objectId;

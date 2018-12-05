@@ -17,6 +17,13 @@
 
 package agilermi;
 
+/**
+ * This class represents response messages to invocation requests. This class is
+ * the counterpart of the {@link InvocationHandle} class
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 class ReturnHandle implements Handle {
 	private static final long serialVersionUID = 6674503222830749941L;
 	public long invocationId;

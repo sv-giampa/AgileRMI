@@ -15,24 +15,21 @@
  *  
  **/
 
-package agilermi.filter;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+package agilermi;
 
 /**
- * This interface is used to specify a factory for input and output streams that
- * are used on TCP communication in Agile RMI. For example, this interface can
- * be used to add a compress layer to the communication between hosts.
+ * This exception is thrown when a {@link RmiHandler} instance has been disposed
+ * before or during an invocation. This exception is received by the attached
+ * failure observers when the {@link RmiHandler#dispose()} method has been
+ * called.
  * 
  * @author Salvatore Giampa'
  *
  */
-public interface FilterFactory {
+public class RemoteException extends RuntimeException {
+	private static final long serialVersionUID = 3064594603835597427L;
 
-	OutputStream buildOutputStream(OutputStream outputStream) throws IOException;
-
-	InputStream buildInputStream(InputStream inputStream) throws IOException;
-
+	public RemoteException() {
+		super("The RmiHandler has been disposed");
+	}
 }

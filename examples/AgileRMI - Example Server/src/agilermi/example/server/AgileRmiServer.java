@@ -7,7 +7,7 @@ import agilermi.example.service.Service;
 
 public class AgileRmiServer {
 
-	public static void main(String[] args) throws IOException {
+	public static void main(String[] args) throws IOException, InterruptedException {
 		System.out.println("Server started.");
 
 		// rmi registry creation

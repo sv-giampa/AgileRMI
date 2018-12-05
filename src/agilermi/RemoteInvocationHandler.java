@@ -25,6 +25,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 
 /**
  * Defines the invocation handler for the object stubs
@@ -52,6 +53,12 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	}
 
 	private void writeObject(ObjectOutputStream out) throws IOException {
+		if (!(out instanceof RmiObjectOutputStream))
+			System.err.println("** WARNING ** in agilermi.RemoteInvocationHandler.writeObject():\n"
+					+ "\tWe are writing a remote stub into a non-RMI stream!\n"
+					+ "\tWe cannot say what will be read on the input stream of the other side!\n"
+					+ "\tProbably this stub will not be able to establish the connection with its remote counterpart!\n"
+					+ "\tWriting stub to a non-RMI output stream...");
 		InetSocketAddress address = handler.getInetSocketAddress();
 		out.writeUTF(objectId);
 		out.writeUTF(address.getHostString());
@@ -67,9 +74,9 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			RmiObjectInputStream cois = (RmiObjectInputStream) in;
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
 				host = cois.getRemoteAddress();
-			handler = ((RmiObjectInputStream) in).getObjectContext().getRmiHandler(host, port);
+			handler = ((RmiObjectInputStream) in).getRmiRegistry().getRmiHandler(host, port);
 		} else {
-			handler = RmiHandler.connect(host, port);
+			handler = new RmiHandler(new Socket(host, port), new RmiRegistry());
 		}
 
 		try {
@@ -115,13 +122,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			}
 		}
 
-		/*
-		 * if(methodName.equals("writeObject") &&
-		 * parameterTypes[0].isAssignableFrom(cls)) { return hashCode(); }
-		 */
-
 		if (handler.isDisposed()) {
-			throw new RmiDispositionException();
+			throw new RemoteException();
 		} else {
 
 			handler.putHandle(invocation);
@@ -169,6 +171,10 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		return invocation.returnValue;
 	}
 
+	/**
+	 * The finalize method intercept the stub destruction and signal it to the
+	 * remote skeleton, to act the distributed garbage collection mechanism
+	 */
 	@Override
 	protected void finalize() throws Throwable {
 		handler.putHandle(new FinalizeHandle(objectId));

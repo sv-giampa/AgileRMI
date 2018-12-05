@@ -19,5 +19,14 @@ package agilermi;
 
 import java.io.Serializable;
 
+/**
+ * Represents a generic message sent by a {@link RemoteInvocationHandler} to its
+ * associated local {@link RmiHandler} and also it represents a message that can
+ * be sent by a {@link RmiHandler} to another {@link RmiHandler} through the
+ * network, so it is {@link Serializable}.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 interface Handle extends Serializable {
 }

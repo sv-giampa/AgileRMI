@@ -17,6 +17,14 @@
 
 package agilermi;
 
+/**
+ * This class represents a request to add a new remote reference to a skeleton.
+ * This is sent over a {@link RmiHandler} when a new stub is constructed or
+ * deserialized
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 class NewReferenceHandle implements Handle {
 	private static final long serialVersionUID = 8561515474575531127L;
 	public String objectId;

@@ -27,7 +27,14 @@ import java.lang.reflect.Method;
 import javax.naming.OperationNotSupportedException;
 
 /**
- * Defines the invocation handler for the object stubs
+ * The instances of this class contain only an object identifier that references
+ * a remote object on the local machine. The instances of this class are created
+ * only to be sent on the network, and are associated with dynamic poxies that
+ * replace remote objects on the local machine during serialization. On the
+ * other side, these proxies are replaced during deserialization with new stubs
+ * that references the remote objects that have been replaced during
+ * serialization. In few words, this class allows to implement the deep remote
+ * referencing mechanism.
  * 
  * @author Salvatore Giampa'
  *

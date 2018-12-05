@@ -33,7 +33,11 @@ import java.net.UnknownHostException;
 
 /**
  * This class extends the standard {@link ObjectInputStream} to give an object
- * context to the deserializing {@link RemoteInvocationHandler} instances.
+ * context to the deserializing {@link RemoteInvocationHandler} instances. This
+ * class is the right ventricle of the heart of the deep remote referencing
+ * mechanism, that replaces all the remote object references with their remote
+ * stub, when they are sent on the network. Its counterpart is the
+ * {@link RmiObjectInputStream} class.
  * 
  * @author Salvatore Giampa'
  *
@@ -223,6 +227,12 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 		if (mustRemotize(obj))
 			return remotize(obj);
 		return obj;
+	}
+
+	@Override
+	public void flush() throws IOException {
+		super.flush();
+		this.reset();
 	}
 
 }

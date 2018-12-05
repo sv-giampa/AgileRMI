@@ -170,7 +170,7 @@ class ClientTest {
 	 * @Test void testDispositionBeforeInvocation() { clientRegistry.stopListener();
 	 * 
 	 * boolean test; try { stub.test(1); test = false; } catch
-	 * (RmiDispositionException e) { e.printStackTrace(); test = true; }
+	 * (RemoteException e) { e.printStackTrace(); test = true; }
 	 * 
 	 * assertTrue(test, "No exception thrown!");
 	 * 
@@ -186,20 +186,20 @@ class ClientTest {
 	 * };
 	 * 
 	 * boolean test; try { stub.testObserver(observer); test = false; } catch
-	 * (RmiDispositionException e) { e.printStackTrace(); test = true; }
+	 * (RemoteException e) { e.printStackTrace(); test = true; }
 	 * 
 	 * assertTrue(test, "No exception thrown!"); }
 	 * 
 	 * @Test void testDispositionAfterInvocation() {
 	 * 
 	 * boolean test; try { stub.test(1); test = false; } catch
-	 * (RmiDispositionException e) { test = true; }
+	 * (RemoteException e) { test = true; }
 	 * 
 	 * assertFalse(test, "Exception should not be thrown!");
 	 * 
 	 * clientRegistry.stopListener();
 	 * 
-	 * try { stub.test(1); test = false; } catch (RmiDispositionException e) { test
+	 * try { stub.test(1); test = false; } catch (RemoteException e) { test
 	 * = true; }
 	 * 
 	 * assertTrue(test, "No exception thrown!");
