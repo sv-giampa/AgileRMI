@@ -477,6 +477,7 @@ public class RmiRegistry {
 	 * 
 	 * @param objectId the object identifier of the remote object
 	 */
+
 	public synchronized void unpublish(String objectId) {
 		synchronized (lock) {
 			Skeleton skeleton = skeletonById.remove(objectId);

@@ -18,6 +18,11 @@ public class AgileRmiServer {
 
 		// remote objects publishing
 		rmiRegistry.publish("service", service);
+
+		while (true) {
+			Thread.sleep(5000);
+			System.gc();
+		}
 	}
 
 }

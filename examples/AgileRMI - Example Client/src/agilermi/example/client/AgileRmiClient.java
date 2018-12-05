@@ -94,6 +94,10 @@ public class AgileRmiClient {
 
 		System.out.println("Example terminated.");
 		Thread.sleep(2000);
+
+		while (true) {
+			Thread.sleep(1000);
+		}
 	}
 
 }
