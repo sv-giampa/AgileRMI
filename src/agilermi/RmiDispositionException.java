@@ -29,6 +29,6 @@ public class RmiDispositionException extends RuntimeException {
 	private static final long serialVersionUID = 3064594603835597427L;
 
 	public RmiDispositionException() {
-		super("The ObjectPeer has been disposed");
+		super("The RmiHandler has been disposed");
 	}
 }

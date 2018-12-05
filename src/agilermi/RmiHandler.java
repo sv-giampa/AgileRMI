@@ -41,8 +41,6 @@ import java.util.concurrent.BlockingQueue;
 
 import javax.net.SocketFactory;
 
-import agilermi.filter.FilterFactory;
-
 /**
  * 
  * @author Salvatore Giampa'
@@ -85,28 +83,17 @@ public class RmiHandler {
 
 	private RmiRegistry rmiRegistry;
 
-	/**
-	 * Map for invocations that are waiting a response
-	 */
+	// Map for invocations that are waiting a response
 	private Map<Long, InvocationHandle> invocations = Collections.synchronizedMap(new HashMap<>());
 
-	/**
-	 * The queue for buffered invocations that are ready to be sent over the socket
-	 */
+	// The queue for buffered invocations that are ready to be sent over the socket
 	private BlockingQueue<Handle> invokeQueue = new ArrayBlockingQueue<>(200);
 
-	/**
-	 * Flag that indicates if this ObjectPeer has been disposed. When
-	 */
+	// Flag that indicates if this ObjectPeer has been disposed.
 	private boolean disposed = false;
 
+	// remote references requested by the other machine
 	private Set<String> references = new TreeSet<>();
-
-	/**
-	 * Implements the flyweight pattern for stubs creation
-	 */
-	// private Map<StubKey, Object> stubFlyweight = Collections.synchronizedMap(new
-	// HashMap<>());
 
 	/**
 	 * Connects to the selected address and port and creates a new ObjectPeer over
@@ -178,8 +165,11 @@ public class RmiHandler {
 		this.socket = socket;
 		this.rmiRegistry = rmiRegistry;
 
-		OutputStream output = new BufferedOutputStream(socket.getOutputStream(), 512);
-		InputStream input = new BufferedInputStream(socket.getInputStream(), 512);
+		OutputStream output = new BufferedOutputStream(socket.getOutputStream(), 256);
+		InputStream input = new BufferedInputStream(socket.getInputStream(), 256);
+
+		// OutputStream output = socket.getOutputStream();
+		// InputStream input = socket.getInputStream();
 
 		if (filterFactory != null) {
 			output = filterFactory.buildOutputStream(output);

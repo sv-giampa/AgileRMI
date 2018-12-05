@@ -75,19 +75,26 @@ class Skeleton {
 		scheduleRemove();
 	}
 
-	private void scheduleRemove() {
-		if (refGlobalCounter == 0 && names.isEmpty())
-			new Thread(() -> {
+	private Thread scheduledRemove = null;
+
+	private synchronized void scheduleRemove() {
+		if (refGlobalCounter == 0 && names.isEmpty()) {
+			if (scheduledRemove != null)
+				scheduledRemove.interrupt();
+			scheduledRemove = new Thread(() -> {
 				try {
 					Thread.sleep(10000);
 				} catch (InterruptedException e) {
-					e.printStackTrace();
+					return;
 				}
-				synchronized (this) {
-					if (refGlobalCounter == 0 && names.isEmpty())
+				synchronized (Skeleton.this) {
+					if (refGlobalCounter == 0 && names.isEmpty()) {
 						rmiRegistry.unpublish(object);
+					}
 				}
-			}).start();
+			});
+			scheduledRemove.start();
+		}
 	}
 
 	public void addNames(String name) {

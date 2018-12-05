@@ -225,4 +225,10 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 		return obj;
 	}
 
+	@Override
+	public void flush() throws IOException {
+		super.flush();
+		this.reset();
+	}
+
 }

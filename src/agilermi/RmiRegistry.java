@@ -33,8 +33,6 @@ import java.util.Set;
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 
-import agilermi.filter.FilterFactory;
-
 /**
  * Defines a simple class that accepts new TCP connections over a port of the
  * local machine and automatically creates and manages the object sockets to
@@ -72,7 +70,7 @@ public class RmiRegistry {
 	// automatically referenced interfaces
 	private Set<Class<?>> remotes = new HashSet<>();
 
-	private Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
+	Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
 
 	private Map<String, Skeleton> skeletonById = new HashMap<>();
 
@@ -377,14 +375,6 @@ public class RmiRegistry {
 	 * @return the generated identifier
 	 */
 	public synchronized String publish(Object object) {
-//		if (byEntry.containsKey(object)) {
-//			return byEntry.get(object);
-//		}
-//
-//		String id = "#" + String.valueOf(nextId++); // objectId pattern: /\#[0-9]+/
-//		byEntry.put(object, id);
-//		byId.put(id, object);
-
 		if (skeletonByObject.containsKey(object)) {
 			Skeleton sk = skeletonByObject.get(object);
 			if (sk.getObject() != object)
@@ -402,36 +392,23 @@ public class RmiRegistry {
 	/**
 	 * Unpublish an object respect to the given interface
 	 * 
-	 * @param object   the implementation to unpublish
-	 * @param remoteIf the interface respect to unpublish
+	 * @param object the object to unpublish
 	 */
 	public synchronized void unpublish(Object object) {
-
 		Skeleton skeleton = skeletonByObject.remove(object);
 		if (skeleton != null) {
 			skeletonById.remove(skeleton.getId());
 			for (String id : skeleton.names())
 				skeletonById.remove(id);
 		}
-
-//		String id = byEntry.remove(object);
-//		if (id != null)
-//			byId.remove(id);
 	}
 
 	/**
 	 * Unpublish the service with the specified identifier
 	 * 
-	 * @param objectId the objectId of the service
+	 * @param objectId the object identifier of the remote object
 	 */
 	public synchronized void unpublish(String id) {
-//		if (id.matches("\\#[0-9]+"))
-//			throw new IllegalArgumentException(
-//					"The used identifier pattern /\\#[0-9]+/ is reserved to atomatic referencing. Please use another identifier pattern.");
-//		Object entry = byId.remove(id);
-//		if (entry != null)
-//			byEntry.remove(entry);
-
 		Skeleton skeleton = skeletonById.remove(id);
 		if (skeleton != null) {
 			skeletonByObject.remove(skeleton.getObject());

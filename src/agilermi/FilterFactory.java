@@ -15,7 +15,7 @@
  *  
  **/
 
-package agilermi.filter;
+package agilermi;
 
 import java.io.IOException;
 import java.io.InputStream;

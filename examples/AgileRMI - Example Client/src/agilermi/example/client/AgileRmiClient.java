@@ -59,9 +59,6 @@ public class AgileRmiClient {
 			}
 		};
 
-		// attach observer
-		service.attachObserver(o);
-
 		System.out.println("square(5) = " + service.square(5));
 
 		System.out.println("5+8 = " + service.add(5, 8));
@@ -70,6 +67,10 @@ public class AgileRmiClient {
 		Thread.sleep(3000);
 		service.printlnOnServer("Hello! I'm the client");
 		Thread.sleep(3000);
+
+		// attach observer
+		System.out.println("Attaching observer...");
+		service.attachObserver(o);
 
 		System.out.println("Starting asynchronous observers calls...");
 		service.startObserversCalls();
@@ -93,6 +94,10 @@ public class AgileRmiClient {
 
 		System.out.println("Example terminated.");
 		Thread.sleep(2000);
+
+		while (true) {
+			Thread.sleep(1000);
+		}
 	}
 
 }

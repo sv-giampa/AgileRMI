@@ -7,7 +7,7 @@ import agilermi.example.service.Service;
 
 public class AgileRmiServer {
 
-	public static void main(String[] args) throws IOException {
+	public static void main(String[] args) throws IOException, InterruptedException {
 		System.out.println("Server started.");
 
 		// rmi registry creation
@@ -18,6 +18,11 @@ public class AgileRmiServer {
 
 		// remote objects publishing
 		rmiRegistry.publish("service", service);
+
+		while (true) {
+			Thread.sleep(5000);
+			System.gc();
+		}
 	}
 
 }

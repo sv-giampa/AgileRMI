@@ -67,7 +67,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			RmiObjectInputStream cois = (RmiObjectInputStream) in;
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
 				host = cois.getRemoteAddress();
-			handler = ((RmiObjectInputStream) in).getObjectContext().getRmiHandler(host, port);
+			handler = ((RmiObjectInputStream) in).getRmiRegistry().getRmiHandler(host, port);
 		} else {
 			handler = RmiHandler.connect(host, port);
 		}

@@ -54,7 +54,7 @@ class RmiObjectInputStream extends ObjectInputStream {
 		this.enableResolveObject(true);
 	}
 
-	public RmiRegistry getObjectContext() {
+	public RmiRegistry getRmiRegistry() {
 		return rmiRegistry;
 	}
 
