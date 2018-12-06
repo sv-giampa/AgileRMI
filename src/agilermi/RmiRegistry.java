@@ -82,6 +82,12 @@ public class RmiRegistry {
 	private FilterFactory filterFactory;
 
 	/**
+	 * If it is enabled, tends to create new connections for each created or
+	 * received stub. By default it is disabled.
+	 */
+	private boolean multiConnectionMode = false;
+
+	/**
 	 * Creates a new simple RmiRegistry instance, without starting its connection
 	 * listener. No other layers are inserted into the communication of
 	 * {@link RmiHandler} instances, just a plain, object based communication will
@@ -250,6 +256,25 @@ public class RmiRegistry {
 	}
 
 	/**
+	 * Shows the multi-connection mode enable state. See
+	 * {@link #multiConnectionMode}.
+	 * 
+	 * @return true if multi-connection mode is enabled, false otherwise
+	 */
+	public boolean isMultiConnectionMode() {
+		return multiConnectionMode;
+	}
+
+	/**
+	 * Enable or disable multi-connection mode. See {@link #multiConnectionMode}.
+	 * 
+	 * @param multiConnectionMode true to enable, false to disable
+	 */
+	public void setMultiConnectionMode(boolean multiConnectionMode) {
+		this.multiConnectionMode = multiConnectionMode;
+	}
+
+	/**
 	 * Gets the stub for the specified object identifier on the specified host
 	 * respect to the given interface. This method creates a new {@link RmiHandler}
 	 * if necessary to communicate with the specified host. The new
@@ -267,13 +292,39 @@ public class RmiRegistry {
 	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces)
 			throws UnknownHostException, IOException {
 		synchronized (lock) {
-			return getRmiHandler(address, port).getStub(objectId, stubInterfaces);
+			return getRmiHandler(address, port, multiConnectionMode).getStub(objectId, stubInterfaces);
 		}
 	}
 
 	/**
-	 * Gets the {@link RmiHandler} object for the specified host. If it has not been
-	 * created, creates it.
+	 * Gets the stub for the specified object identifier on the specified host
+	 * respect to the given interface. This method creates a new {@link RmiHandler}
+	 * if necessary to communicate with the specified host. The new
+	 * {@link RmiHandler} can be obtained by calling the
+	 * {@link #getRmiHandler(String, int)} method.
+	 * 
+	 * @param address          the host address
+	 * @param port             the host port
+	 * @param objectId         the remote object identifier
+	 * @param createNewHandler always create a new handler without getting an
+	 *                         already existing one. This parameter overrides the
+	 *                         {@link #multiConnectionMode} attribute
+	 * @param stubInterfaces   the interfaces implemented by the stub
+	 * @return the stub object
+	 * @throws UnknownHostException if the host address cannot be resolved
+	 * @throws IOException          if I/O errors occur
+	 */
+	public Object getStub(String address, int port, String objectId, boolean createNewHandler,
+			Class<?>... stubInterfaces) throws UnknownHostException, IOException {
+		synchronized (lock) {
+			return getRmiHandler(address, port, createNewHandler).getStub(objectId, stubInterfaces);
+		}
+	}
+
+	/**
+	 * Gets an {@link RmiHandler} instance for the specified host. If it has not
+	 * been created, creates it. If some RmiHandler already exists, gets one of
+	 * them.
 	 * 
 	 * @param host the host address
 	 * @param port the host port
@@ -282,13 +333,29 @@ public class RmiRegistry {
 	 * @throws IOException          if I/O errors occur
 	 */
 	public RmiHandler getRmiHandler(String host, int port) throws IOException {
+		return getRmiHandler(host, port, false);
+	}
+
+	/**
+	 * Gets an {@link RmiHandler} instance for the specified host. If it has not
+	 * been created, creates it.
+	 * 
+	 * @param host      the host address
+	 * @param port      the host port
+	 * @param createNew always create a new handler without getting an already
+	 *                  existing one
+	 * @return the object peer related to the specified host
+	 * @throws UnknownHostException if the host address cannot be resolved
+	 * @throws IOException          if I/O errors occur
+	 */
+	public RmiHandler getRmiHandler(String host, int port, boolean createNew) throws IOException {
 		synchronized (lock) {
 			InetSocketAddress inetAddress = new InetSocketAddress(host, port);
 			if (!handlers.containsKey(inetAddress))
 				handlers.put(inetAddress, new ArrayList<>(1));
 			List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
 			RmiHandler rmiHandler = null;
-			if (rmiHandlers.size() == 0)
+			if (rmiHandlers.size() == 0 || createNew)
 				rmiHandlers.add(rmiHandler = new RmiHandler(sFactory.createSocket(host, port), this, filterFactory));
 			else
 				rmiHandler = rmiHandlers.get((int) (Math.random() * rmiHandlers.size()));
