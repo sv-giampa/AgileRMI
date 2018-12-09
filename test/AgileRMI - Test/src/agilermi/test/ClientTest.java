@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 
 import org.junit.jupiter.api.AfterAll;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
+import agilermi.Authenticator;
 import agilermi.FailureObserver;
 import agilermi.RmiHandler;
 import agilermi.RmiRegistry;
@@ -47,8 +50,24 @@ class ClientTest {
 	}
 
 	void serverSetUp() throws Exception {
+
+		Authenticator authenticator = new Authenticator() {
+			@Override
+			public boolean authorize(String authId, Object object, Method method) {
+				return true;
+			}
+
+			@Override
+			public boolean authenticate(InetSocketAddress remoteAddress, String authId, String passphrase) {
+				System.out.println("authentication [remoteAddress: " + remoteAddress + "; authId: " + authId
+						+ "; passphrase: " + passphrase + "]");
+				return authId.equals("testId") && passphrase.equals("testPass");
+			}
+		};
+
 		// object server creation
-		serverRegistry = new RmiRegistry(3031, true);
+		// serverRegistry = new RmiRegistry(3031, true);
+		serverRegistry = RmiRegistry.builder().enableListener(3031, true).setAuthenticator(authenticator).build();
 
 		// remote objects creation
 		TestIF test = new TestImpl();
@@ -58,8 +77,8 @@ class ClientTest {
 	}
 
 	void clientSetUp() throws Exception {
-		// create connection, the ObjectPeer, and get the ObjectRegistry
-		clientRegistry = new RmiRegistry();
+		// create the registry
+		clientRegistry = RmiRegistry.builder().setAuthentication("testId", "testPass").build();
 		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);
 
 		// attach failure observer to manage connection and I/O errors
@@ -169,8 +188,8 @@ class ClientTest {
 	/*
 	 * @Test void testDispositionBeforeInvocation() { clientRegistry.stopListener();
 	 * 
-	 * boolean test; try { stub.test(1); test = false; } catch
-	 * (RemoteException e) { e.printStackTrace(); test = true; }
+	 * boolean test; try { stub.test(1); test = false; } catch (RemoteException e) {
+	 * e.printStackTrace(); test = true; }
 	 * 
 	 * assertTrue(test, "No exception thrown!");
 	 * 
@@ -192,15 +211,15 @@ class ClientTest {
 	 * 
 	 * @Test void testDispositionAfterInvocation() {
 	 * 
-	 * boolean test; try { stub.test(1); test = false; } catch
-	 * (RemoteException e) { test = true; }
+	 * boolean test; try { stub.test(1); test = false; } catch (RemoteException e) {
+	 * test = true; }
 	 * 
 	 * assertFalse(test, "Exception should not be thrown!");
 	 * 
 	 * clientRegistry.stopListener();
 	 * 
-	 * try { stub.test(1); test = false; } catch (RemoteException e) { test
-	 * = true; }
+	 * try { stub.test(1); test = false; } catch (RemoteException e) { test = true;
+	 * }
 	 * 
 	 * assertTrue(test, "No exception thrown!");
 	 * 

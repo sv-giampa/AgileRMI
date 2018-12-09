@@ -17,6 +17,8 @@
 
 package agilermi;
 
+import java.util.concurrent.Semaphore;
+
 /**
  * This class represents a request for a remote method invocation.
  * 
@@ -52,6 +54,8 @@ class InvocationHandle implements Handle {
 
 	// wait condition for the RemoteInvocationHandler that requested this invocation
 	public transient boolean returned = false;
+
+	public transient Semaphore semaphone = new Semaphore(0);
 
 	/**
 	 * Builds an invocation handle with the given invocation identifier

@@ -15,21 +15,14 @@
  *  
  **/
 
-package agilermi;
+package agilermi.exception;
 
-/**
- * This exception is thrown when a {@link RmiHandler} instance has been disposed
- * before or during an invocation. This exception is received by the attached
- * failure observers when the {@link RmiHandler#dispose()} method has been
- * called.
- * 
- * @author Salvatore Giampa'
- *
- */
-public class RemoteException extends RuntimeException {
-	private static final long serialVersionUID = 3064594603835597427L;
+public class AuthorizationException extends RemoteException {
 
-	public RemoteException() {
-		super("The RmiHandler has been disposed");
+	private static final long serialVersionUID = 8881356199230680956L;
+
+	public AuthorizationException() {
+		super("the requested invocation has not been authorized for the currently authenticated user");
 	}
+
 }

@@ -17,8 +17,6 @@
 
 package agilermi;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.NotSerializableException;
@@ -38,8 +36,13 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Semaphore;
 
 import javax.net.SocketFactory;
+
+import agilermi.exception.LocalAuthenticationException;
+import agilermi.exception.RemoteAuthenticationException;
+import agilermi.exception.RemoteException;
 
 /**
  * 
@@ -87,7 +90,7 @@ public class RmiHandler {
 	private Map<Long, InvocationHandle> invocations = Collections.synchronizedMap(new HashMap<>());
 
 	// The queue for buffered invocations that are ready to be sent over the socket
-	private BlockingQueue<Handle> invokeQueue = new ArrayBlockingQueue<>(200);
+	private BlockingQueue<Handle> handleQueue = new ArrayBlockingQueue<>(200);
 
 	// Flag that indicates if this RmiHandler has been disposed.
 	private boolean disposed = false;
@@ -125,11 +128,14 @@ public class RmiHandler {
 		}
 
 		// let the stubs to return
-		for (Handle handle : invocations.values()) {
-			if (handle instanceof InvocationHandle)
+		for (InvocationHandle handle : invocations.values()) {
+			forceInvocationReturn(handle);
+		}
+
+		// release all the handle in the handleQueue
+		for (Handle handle : handleQueue) {
+			if (handle instanceof InvocationHandle) {
 				forceInvocationReturn((InvocationHandle) handle);
-			synchronized (handle) {
-				handle.notifyAll();
 			}
 		}
 
@@ -148,7 +154,7 @@ public class RmiHandler {
 		out = null;
 		in = null;
 		invocations.clear();
-		invokeQueue.clear();
+		handleQueue.clear();
 	}
 
 	/**
@@ -231,17 +237,13 @@ public class RmiHandler {
 	 * @see RmiHandler#connect(String, int)
 	 * @throws IOException if an I/O error occurs
 	 */
-	@SuppressWarnings("resource")
 	RmiHandler(Socket socket, RmiRegistry rmiRegistry, FilterFactory filterFactory) throws IOException {
 		inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
 		this.socket = socket;
 		this.rmiRegistry = rmiRegistry;
 
-		OutputStream output = new BufferedOutputStream(socket.getOutputStream(), 256);
-		InputStream input = new BufferedInputStream(socket.getInputStream(), 256);
-
-		// OutputStream output = socket.getOutputStream();
-		// InputStream input = socket.getInputStream();
+		OutputStream output = socket.getOutputStream();
+		InputStream input = socket.getInputStream();
 
 		if (filterFactory != null) {
 			output = filterFactory.buildOutputStream(output);
@@ -250,7 +252,6 @@ public class RmiHandler {
 
 		out = new RmiObjectOutputStream(output, rmiRegistry);
 		out.flush();
-
 		in = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress);
 
 		receiver.setDaemon(true);
@@ -295,12 +296,10 @@ public class RmiHandler {
 	}
 
 	private void forceInvocationReturn(InvocationHandle invocation) {
-		synchronized (invocation) {
-			if (rmiRegistry.isRemoteExceptionEnabled())
-				invocation.thrownException = new RemoteException();
-			invocation.returned = true;
-			invocation.notifyAll();
-		}
+		if (rmiRegistry.isRemoteExceptionEnabled())
+			invocation.thrownException = new RemoteException();
+		invocation.returned = true;
+		invocation.semaphone.release();
 	}
 
 	/**
@@ -311,23 +310,29 @@ public class RmiHandler {
 	 * @throws InterruptedException
 	 */
 	void putHandle(Handle handle) throws InterruptedException {
-		if (invokeQueue != null)
-			invokeQueue.put(handle);
+		if (handleQueue != null)
+			handleQueue.put(handle);
 	}
 
 	/**
 	 * This is the thread that manages the output stream of the connection only. It
 	 * send new method invocations to the other peer or the invocation results. It
-	 * reads new invocations from the invokeQueue.
+	 * reads new invocations from the handleQueue.
 	 */
 	private Thread sender = new Thread() {
 		@Override
 		public void run() {
+
 			Handle handle = null;
 			try {
+				// send authentication
+				authentication();
+
+				startRead.release();
+
 				while (!isInterrupted()) {
 					handle = null;
-					handle = invokeQueue.take();
+					handle = handleQueue.take();
 
 					if (handle instanceof InvocationHandle) {
 						InvocationHandle invocation = (InvocationHandle) handle;
@@ -363,14 +368,14 @@ public class RmiHandler {
 				}
 			} catch (IOException | InterruptedException e) { // something gone wrong, destroy the handler
 
-				// e.printStackTrace();
-				if (handle instanceof InvocationHandle) {
-					InvocationHandle invocation = (InvocationHandle) handle;
-					invocation.thrownException = e;
+				e.printStackTrace();
 
-				}
-				synchronized (handle) {
-					handle.notifyAll();
+				if (handle != null) {
+					if (handle instanceof InvocationHandle) {
+						InvocationHandle invocation = (InvocationHandle) handle;
+						invocation.thrownException = e;
+						invocation.semaphone.release();
+					}
 				}
 
 				if (disposed)
@@ -388,7 +393,50 @@ public class RmiHandler {
 				rmiRegistry.sendRmiHandlerFailure(RmiHandler.this, e);
 			}
 		}
+
+		/**
+		 * Executes the authentication negotiation
+		 * 
+		 * @throws IOException                   if an I/O error occurs
+		 * @throws LocalAuthenticationException  if the local {@link RmiHandler} cannot
+		 *                                       authenticate the remote one
+		 * @throws RemoteAuthenticationException if the remote {@link RmiHandler} cannot
+		 *                                       authenticate the local one
+		 */
+		private void authentication() throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
+			out.writeUnshared(rmiRegistry.getAuthIdentifier());
+			out.writeUnshared(rmiRegistry.getAuthPassphrase());
+			out.flush();
+
+			String authId, authPass;
+			try {
+				authId = (String) in.readUnshared();
+				authPass = (String) in.readUnshared();
+			} catch (ClassNotFoundException e) {
+				out.writeBoolean(false);
+				out.flush();
+				throw new LocalAuthenticationException();
+			}
+
+			if (rmiRegistry.getAuthenticator() == null
+					|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, authId, authPass)) {
+				out.writeBoolean(true);
+				out.flush();
+			} else {
+				out.writeBoolean(false);
+				out.flush();
+				throw new LocalAuthenticationException();
+			}
+
+			boolean authResult = in.readBoolean();
+
+			if (!authResult)
+				throw new RemoteAuthenticationException();
+		}
 	};
+
+	private Semaphore startRead = new Semaphore(0);
+
 	/**
 	 * This is the thread that manages the input stream of the connection only. It
 	 * receives new method invocations by the other peer or the invocation results.
@@ -400,60 +448,76 @@ public class RmiHandler {
 		@Override
 		public void run() {
 			try {
+				// receive authentication
+				startRead.acquire();
+
 				while (!isInterrupted()) {
 					Handle handle = (Handle) (in.readUnshared());
 					if (handle instanceof InvocationHandle) {
 						InvocationHandle invocation = (InvocationHandle) handle;
-						new Thread(() -> {
+
+						// get the skeleton
+						Skeleton skeleton = rmiRegistry.getSkeleton(invocation.objectId);
+
+						// retrieve the object
+						Object object = skeleton.getObject();
+
+						// get the correct method
+						Method method = object.getClass().getMethod(invocation.method, invocation.parameterTypes);
+
+						// get authorization
+						boolean authorized = rmiRegistry.getAuthenticator() == null || rmiRegistry.getAuthenticator()
+								.authorize(rmiRegistry.getAuthIdentifier(), object, method);
+
+						// if authorized, starts the delegation thread
+						if (authorized) {
+							new Thread(() -> {
+								ReturnHandle retHandle = new ReturnHandle();
+								retHandle.invocationId = invocation.id;
+								try {
+
+									retHandle.returnValue = skeleton.invoke(invocation.method,
+											invocation.parameterTypes, invocation.parameters);
+
+									// set invocation return class
+									retHandle.returnClass = method.getReturnType();
+
+								} catch (InvocationTargetException e) {
+									e.printStackTrace();
+									retHandle.thrownException = e.getCause();
+								} catch (NoSuchMethodException e) {
+									e.printStackTrace();
+									retHandle.thrownException = new NoSuchMethodException("The method '"
+											+ invocation.method + "(" + Arrays.toString(invocation.parameterTypes)
+											+ ")' does not exists for the object with identifier '"
+											+ invocation.objectId + "'.");
+								} catch (SecurityException e) {
+									e.printStackTrace();
+									retHandle.thrownException = e;
+								} catch (IllegalAccessException e) {
+									e.printStackTrace();
+								} catch (IllegalArgumentException e) {
+									e.printStackTrace();
+									retHandle.thrownException = e;
+								} catch (NullPointerException e) {
+									e.printStackTrace();
+									retHandle.thrownException = new NullPointerException("The object identifier '"
+											+ invocation.objectId + "' of the stub is not bound to a remote object");
+								}
+
+								// send invocation response after method execution
+								try {
+									handleQueue.put(retHandle);
+								} catch (InterruptedException e) {
+								}
+
+							}).start();
+						} else {
+							// not authorized: send an authorization exception
 							ReturnHandle retHandle = new ReturnHandle();
 							retHandle.invocationId = invocation.id;
-							try {
-
-								Skeleton skeleton = rmiRegistry.getSkeleton(invocation.objectId);
-
-								// retrieve the object
-								Object object = skeleton.getObject();
-
-								retHandle.returnValue = skeleton.invoke(invocation.method, invocation.parameterTypes,
-										invocation.parameters);
-
-								// find the correct method
-								Method method = object.getClass().getMethod(invocation.method,
-										invocation.parameterTypes);
-
-								// set invocation return class
-								retHandle.returnClass = method.getReturnType();
-
-							} catch (InvocationTargetException e) {
-								e.printStackTrace();
-								retHandle.thrownException = e.getCause();
-							} catch (NoSuchMethodException e) {
-								e.printStackTrace();
-								retHandle.thrownException = new NoSuchMethodException("The method '" + invocation.method
-										+ "(" + Arrays.toString(invocation.parameterTypes)
-										+ ")' does not exists for the object with identifier '" + invocation.objectId
-										+ "'.");
-							} catch (SecurityException e) {
-								e.printStackTrace();
-								retHandle.thrownException = e;
-							} catch (IllegalAccessException e) {
-								e.printStackTrace();
-							} catch (IllegalArgumentException e) {
-								e.printStackTrace();
-								retHandle.thrownException = e;
-							} catch (NullPointerException e) {
-								e.printStackTrace();
-								retHandle.thrownException = new NullPointerException("The object identifier '"
-										+ invocation.objectId + "' of the stub is not bound to a remote object");
-							}
-
-							// send invocation response after method execution
-							try {
-								invokeQueue.put(retHandle);
-							} catch (InterruptedException e) {
-							}
-
-						}).start();
+							retHandle.thrownException = new RuntimeException("authentication exception");
+						}
 					} else if (handle instanceof ReturnHandle) {
 						ReturnHandle ret = (ReturnHandle) handle;
 
@@ -469,9 +533,11 @@ public class RmiHandler {
 							invocation.returned = true;
 
 							// notify the invocation handler that is waiting on it
-							synchronized (invocation) {
-								invocation.notifyAll();
-							}
+							invocation.semaphone.release();
+
+							/*
+							 * synchronized (invocation) { invocation.notifyAll(); }
+							 */
 						}
 					} else if (handle instanceof FinalizeHandle) {
 						FinalizeHandle finHandle = (FinalizeHandle) handle;

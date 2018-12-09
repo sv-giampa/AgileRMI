@@ -34,6 +34,8 @@ import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLSocketFactory;
 
+import agilermi.exception.RemoteException;
+
 /**
  * Defines a class that accepts new TCP connections over a port of the local
  * machine and automatically creates and manages the object sockets to export
@@ -81,42 +83,245 @@ public class RmiRegistry {
 	// filter factory used to customize network communication streams
 	private FilterFactory filterFactory;
 
-	/**
-	 * If it is enabled, tends to create new connections for each created or
-	 * received stub. By default it is disabled.
-	 */
+	// multi connection mode
 	private boolean multiConnectionMode = false;
+
+	// authentication details
+	private String authIdentifier;
+	private String authPassphrase;
+
+	private Authenticator authenticator;
+
+	/**
+	 * Creates a new {@link RmiRegistry.Builder} instance, used to configure and
+	 * start a new {@link RmiRegistry} instance.
+	 * 
+	 * @return a new {@link RmiRegistry.Builder} instance
+	 */
+	public static Builder builder() {
+		return new Builder();
+	}
+
+	/**
+	 * Builder for {@link RmiRegistry}. A new instance of this class can be returned
+	 * by the {@link RmiRegistry#builder()} static method. A new instance of this
+	 * class wraps all the defaults for {@link RmiRegistry} and allows to modify
+	 * them. When the configuration has been terminated, a new {@link RmiRegistry}
+	 * instance can be obtained by the {@link Builder#build()} method.
+	 * 
+	 * defaults:<br>
+	 * <ul>
+	 * <li>connection listener enabled: false</li>
+	 * <li>connection listener port: 0 (a random port)</li>
+	 * <li>connection listener daemon: true</li>
+	 * <li>{@link ServerSocketFactory}: null (that is
+	 * {@link ServerSocketFactory#getDefault()})</li>
+	 * <li>{@link SocketFactory}: null (that is
+	 * {@link SocketFactory#getDefault()})</li>
+	 * <li>{@link FilterFactory}: null</li>
+	 * <li>{@link Authenticator}: null</li>
+	 * <li>authentication Identifier: null (that is guest identifier)</li>
+	 * <li>authentication pass-phrase: null (that is guest pass-phrase)</li>
+	 * </ul>
+	 * 
+	 * @author Salvatore Giampa'
+	 *
+	 */
+	public static class Builder {
+
+		private Builder() {
+		}
+
+		// listener
+		private boolean listenerEnable = false;
+		private int listenerPort = 0;
+		private boolean listenerDaemon = true;
+
+		// underlyng protocols
+		private ServerSocketFactory serverSocketFactory = ServerSocketFactory.getDefault();
+		private SocketFactory socketFactory = SocketFactory.getDefault();
+		private FilterFactory filterFactory;
+
+		// authentication
+		private Authenticator authenticator;
+		private String authIdentifier;
+		private String authPassphrase;
+
+		/**
+		 * Set the data used to authenticate new connection from this registry on the
+		 * remote machines.
+		 * 
+		 * @param authIdentifier authentication identifier
+		 * @param authPassphrase authentication pass-phrase
+		 * @return this builder
+		 */
+		public Builder setAuthentication(String authIdentifier, String authPassphrase) {
+			this.authIdentifier = authIdentifier;
+			this.authPassphrase = authPassphrase;
+			return this;
+		}
+
+		/**
+		 * Set an {@link Authenticator} object that intercept authentication and
+		 * authorization requests from remote machines.
+		 * 
+		 * @param authenticator the {@link Authenticator} instance to use
+		 * @return this builder
+		 */
+		public Builder setAuthenticator(Authenticator authenticator) {
+			this.authenticator = authenticator;
+			return this;
+		}
+
+		/**
+		 * 
+		 * Sets the socket factories that the registry will use.
+		 * 
+		 * @param socketFactory       the {@link SocketFactory} instance to use to build
+		 *                            client sockets
+		 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
+		 *                            build the listener server socket
+		 * @return this builder
+		 */
+		public Builder setSocketFactories(SocketFactory socketFactory, ServerSocketFactory serverSocketFactory) {
+			this.socketFactory = socketFactory;
+			this.serverSocketFactory = serverSocketFactory;
+			return this;
+		}
+
+		/**
+		 * Sets the {@link FilterFactory} instance to use in the registry to build.
+		 * 
+		 * @param filterFactory the {@link FilterFactory} instance that gives the
+		 *                      streams in which the underlying communication streams
+		 *                      will be wrapped in
+		 * @return this builder
+		 */
+		public Builder setFilterFactory(FilterFactory filterFactory) {
+			this.filterFactory = filterFactory;
+			return this;
+		}
+
+		/**
+		 * Enable the connection listener on the registry to build.
+		 * 
+		 * @param port     the port to listen on
+		 * @param isDaemon the daemon flag of the listener thread. See
+		 *                 {@link Thread#setDaemon(boolean)} for more details.
+		 * @return this builder
+		 */
+		public Builder enableListener(int port, boolean isDaemon) {
+			this.listenerPort = port;
+			this.listenerDaemon = isDaemon;
+			this.listenerEnable = true;
+			return this;
+		}
+
+		/**
+		 * Disable the connection listener on the registry to build. This method is
+		 * useful when the same instance of the builder is used to build more than one
+		 * registry and the {@link #enableListener(int, boolean)} method was called.
+		 * 
+		 * @return this builder
+		 */
+		public Builder disableListener() {
+			this.listenerEnable = false;
+			return this;
+		}
+
+		/**
+		 * Builds the RmiRegistry.
+		 * 
+		 * @return the built {@link RmiRegistry} instance
+		 * @throws IOException if an I\O error occurs
+		 */
+		public RmiRegistry build() throws IOException {
+			return new RmiRegistry(listenerPort, listenerDaemon, listenerEnable, serverSocketFactory, socketFactory,
+					filterFactory, authenticator, authIdentifier, authPassphrase);
+		}
+	}
+
+	/**
+	 * Package-level method to get authentication identifier.
+	 * 
+	 * @return authentication identifier
+	 */
+	String getAuthIdentifier() {
+		return authIdentifier;
+	}
+
+	/**
+	 * Package-level method to get authentication pass-phrase.
+	 * 
+	 * @return authentication pass-phrase
+	 */
+	String getAuthPassphrase() {
+		return authPassphrase;
+	}
 
 	/**
 	 * Creates a new simple RmiRegistry instance, without starting its connection
 	 * listener. No other layers are inserted into the communication of
 	 * {@link RmiHandler} instances, just a plain, object based communication will
 	 * be established. See other constructors of this class (e.g.
-	 * {@link #RmiRegistry(int, boolean, ServerSocketFactory, SocketFactory, FilterFactory, boolean)})
+	 * {@link #RmiRegistry(int, boolean, boolean, ServerSocketFactory, SocketFactory, FilterFactory, Authenticator, String, String)})
 	 * to add some other communication layers, such as compression, authentication,
-	 * cryptography and so on (For example, you can use the {@link SSLSocketFactory}
-	 * to reach a good level of cryptography for RMI network communication).
+	 * cryptography and so on (For example, you can use a subclass of
+	 * {@link SSLSocketFactory} to reach a good level of cryptography for RMI
+	 * network communication). No authentication information is provided. So if the
+	 * remote machine uses an {@link Authenticator}, probably it will not
+	 * authenticate the connections from this {@link RmiRegistry}
+	 * 
+	 * @see RmiRegistry.Builder
+	 * @see RmiRegistry#builder()
 	 * 
 	 */
 	public RmiRegistry() {
-		this(null, null, null);
+		this(null, null, null, null, null, null);
 	}
 
 	/**
-	 * Creates a new RmiRegistry with the given FilterFactory instance, without
-	 * starting its connection listener in a daemon thread.
+	 * Creates a new {@link RmiRegistry} with the given FilterFactory instance,
+	 * without starting its connection listener in a daemon thread. No
+	 * authentication information is provided. So if the remote machine uses an
+	 * {@link Authenticator}, probably it will not authenticate the connections from
+	 * this {@link RmiRegistry}
 	 * 
 	 * @param filterFactory the {@link FilterFactory} instance that gives the
 	 *                      streams in which the underlying communication streams
 	 *                      will be wrapped in
+	 * 
+	 * @see RmiRegistry.Builder
+	 * @see RmiRegistry#builder()
 	 */
 	public RmiRegistry(FilterFactory filterFactory) {
-		this(null, null, filterFactory);
+		this(null, null, filterFactory, null, null, null);
 	}
 
 	/**
-	 * Creates a new RmiRegistry with the given ServerSocketFactory, SocketFactory
-	 * and FilterFactory instances, without starting the connection listener.
+	 * Creates a new {@link RmiRegistry} with the given FilterFactory instances,
+	 * without starting the connection listener.
+	 * 
+	 * @param filterFactory  the {@link FilterFactory} instance that gives the
+	 *                       streams in which the underlying communication streams
+	 *                       will be wrapped in
+	 * @param authIdentifier the identifier with which this machine presents itself
+	 *                       for authentication and authorization on remote machines
+	 *                       contacted through this registry
+	 * @param authPassphrase the pass-phrase used for authentication on remote
+	 *                       machines contacted through this registry
+	 * 
+	 * @see RmiRegistry.Builder
+	 * @see RmiRegistry#builder()
+	 */
+	public RmiRegistry(FilterFactory filterFactory, String authIdentifier, String authPassphrase) {
+		this(null, null, filterFactory, null, authIdentifier, authPassphrase);
+	}
+
+	/**
+	 * Creates a new {@link RmiRegistry} with the specified {@link FilterFactory}
+	 * and automatically starts its connection listener on the given port in a
+	 * daemon thread.
 	 * 
 	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
 	 *                            build the listener server socket
@@ -125,9 +330,48 @@ public class RmiRegistry {
 	 * @param filterFactory       the {@link FilterFactory} instance that gives the
 	 *                            streams in which the underlying communication
 	 *                            streams will be wrapped in
+	 * @param authIdentifier      the identifier with which this machine presents
+	 *                            itself for authentication and authorization on
+	 *                            remote machines contacted through this registry
+	 * @param authPassphrase      the pass-phrase used for authentication on remote
+	 *                            machines contacted through this registry
+	 * 
+	 * @see RmiRegistry.Builder
+	 * @see RmiRegistry#builder()
 	 */
 	public RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			FilterFactory filterFactory) {
+			FilterFactory filterFactory, String authIdentifier, String authPassphrase) {
+		this(serverSocketFactory, socketFactory, filterFactory, null, authIdentifier, authPassphrase);
+	}
+
+	/**
+	 * Creates a new {@link RmiRegistry} with the given ServerSocketFactory,
+	 * SocketFactory and FilterFactory instances, without starting the connection
+	 * listener.
+	 * 
+	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
+	 *                            build the listener server socket
+	 * @param socketFactory       the {@link SocketFactory} instance to use to build
+	 *                            client sockets
+	 * @param filterFactory       the {@link FilterFactory} instance that gives the
+	 *                            streams in which the underlying communication
+	 *                            streams will be wrapped in
+	 * @param authenticator       an {@link Authenticator} instance that allows to
+	 *                            authenticate and authorize users of incoming
+	 *                            connection. For example, this instance can be an
+	 *                            adapter that access a database or another pre-made
+	 *                            authentication system.
+	 * @param authIdentifier      the identifier with which this machine presents
+	 *                            itself for authentication and authorization on
+	 *                            remote machines contacted through this registry
+	 * @param authPassphrase      the pass-phrase used for authentication on remote
+	 *                            machines contacted through this registry
+	 * 
+	 * @see RmiRegistry.Builder
+	 * @see RmiRegistry#builder()
+	 */
+	public RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
+			FilterFactory filterFactory, Authenticator authenticator, String authIdentifier, String authPassphrase) {
 		if (serverSocketFactory == null)
 			serverSocketFactory = ServerSocketFactory.getDefault();
 		if (socketFactory == null)
@@ -136,110 +380,52 @@ public class RmiRegistry {
 		this.ssFactory = serverSocketFactory;
 		this.sFactory = socketFactory;
 		this.filterFactory = filterFactory;
+
+		this.authIdentifier = authIdentifier;
+		this.authPassphrase = authPassphrase;
+		this.authenticator = authenticator;
 		attachFailureObserver(failureObserver);
 	}
 
 	/**
-	 * Creates a new RmiRegistry and automatically starts its connection listener on
-	 * the given port in a daemon thread.
 	 * 
-	 * @param port the port to listen on
-	 * @throws IOException if an I\O error occurs
-	 */
-	public RmiRegistry(int port) throws IOException {
-		this(port, true, null, null, null, true);
-	}
-
-	/**
-	 * Creates a new RmiRegistry and automatically starts its connection listener on
-	 * the given port.
+	 * Creates a new {@link RmiRegistry}. This constructor allows to reach the
+	 * maximum customization degree of network communication offered by Agile RMI.
 	 * 
-	 * @param port   the port to listen on
-	 * @param daemon set the daemon flag of the listener thread. See
-	 *               {@link Thread#setDaemon(boolean)} for more details.
-	 * @throws IOException if an I\O error occurs
-	 */
-	public RmiRegistry(int port, boolean daemon) throws IOException {
-		this(port, daemon, null, null, null, true);
-	}
-
-	/**
-	 * Creates a new RmiRegistry and automatically starts its connection listener on
-	 * the given port.
-	 * 
-	 * @param port          the port to listen on
-	 * @param daemon        set the daemon flag of the listener thread. See
-	 *                      {@link Thread#setDaemon(boolean)} for more details.
-	 * @param filterFactory the {@link FilterFactory} instance that gives the
-	 *                      streams in which the underlying communication
-	 * @throws IOException if an I/O error occurs
-	 */
-	public RmiRegistry(int port, boolean daemon, FilterFactory filterFactory) throws IOException {
-		this(port, daemon, null, null, filterFactory, true);
-	}
-
-	/**
-	 * Creates a new RmiRegistry with the specified {@link FilterFactory} and
-	 * automatically starts its connection listener on the given port in a daemon
-	 * thread.
-	 * 
-	 * @param port          the port to listen on
-	 * @param filterFactory the {@link FilterFactory} instance that gives the
-	 *                      streams in which the underlying communication
-	 * @throws IOException if an I\O error occurs
-	 */
-	public RmiRegistry(int port, FilterFactory filterFactory) throws IOException {
-		this(port, true, null, null, filterFactory, true);
-	}
-
-	/**
-	 * Creates a new RmiRegistry with the specified {@link FilterFactory} and
-	 * automatically starts its connection listener on the given port in a daemon
-	 * thread.
-	 * 
-	 * @param port                the port to listen on
-	 * @param daemon              set the daemon flag of the listener thread. See
+	 * @param listenerPort        the port to listen on
+	 * @param listenerDaemon      set the daemon flag of the listener thread. See
 	 *                            {@link Thread#setDaemon(boolean)} for more
 	 *                            details.
-	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
-	 *                            build the listener server socket
-	 * @param socketFactory       the {@link SocketFactory} instance to use to build
-	 *                            client sockets
-	 * @param filterFactory       the {@link FilterFactory} instance that gives the
-	 *                            streams in which the underlying communication
-	 *                            streams will be wrapped in
-	 * @throws IOException if an I\O error occurs
-	 */
-	public RmiRegistry(int port, boolean daemon, ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			FilterFactory filterFactory) throws IOException {
-		this(port, daemon, serverSocketFactory, socketFactory, filterFactory, true);
-	}
-
-	/**
-	 * 
-	 * Creates a new RmiRegistry. This constructor allows to reach the maximum
-	 * customization degree of network communication offered by Agile RMI.
-	 * 
-	 * @param port                the port to listen on
-	 * @param daemon              set the daemon flag of the listener thread. See
-	 *                            {@link Thread#setDaemon(boolean)} for more
-	 *                            details.
-	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
-	 *                            build the listener server socket
-	 * @param socketFactory       the {@link SocketFactory} instance to use to build
-	 *                            client sockets
-	 * @param filterFactory       the {@link FilterFactory} instance that gives the
-	 *                            streams in which the underlying communication
-	 *                            streams will be wrapped in
-	 * @param enableListener      set this to true to start the connection listener
+	 * @param listenerEnable      set this to true to start the connection listener
 	 *                            after construction, set to false otherwise
+	 * @param serverSocketFactory the {@link ServerSocketFactory} instance to use to
+	 *                            build the listener server socket
+	 * @param socketFactory       the {@link SocketFactory} instance to use to build
+	 *                            client sockets
+	 * @param filterFactory       the {@link FilterFactory} instance that gives the
+	 *                            streams in which the underlying communication
+	 *                            streams will be wrapped in
+	 * @param authenticator       an {@link Authenticator} instance that allows to
+	 *                            authenticate and authorize users of incoming
+	 *                            connection. For example, this instance can be an
+	 *                            adapter that access a database or another pre-made
+	 *                            authentication system.
+	 * @param authIdentifier      the identifier with which this machine presents
+	 *                            itself for authentication and authorization on
+	 *                            remote machines contacted through this registry
+	 * @param authPassphrase      the pass-phrase used for authentication on remote
+	 *                            machines contacted through this registry
 	 * @throws IOException if an I\O error occurs
+	 * 
+	 * @see RmiRegistry.Builder
+	 * @see RmiRegistry#builder()
 	 */
-	public RmiRegistry(int port, boolean daemon, ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			FilterFactory filterFactory, boolean enableListener) throws IOException {
-		this(serverSocketFactory, socketFactory, filterFactory);
-		if (enableListener)
-			enableListener(port, daemon);
+	public RmiRegistry(int listenerPort, boolean listenerDaemon, boolean listenerEnable,
+			ServerSocketFactory serverSocketFactory, SocketFactory socketFactory, FilterFactory filterFactory,
+			Authenticator authenticator, String authIdentifier, String authPassphrase) throws IOException {
+		this(serverSocketFactory, socketFactory, filterFactory, authenticator, authIdentifier, authPassphrase);
+		if (listenerEnable)
+			enableListener(listenerPort, listenerDaemon);
 	}
 
 	/**
@@ -256,8 +442,9 @@ public class RmiRegistry {
 	}
 
 	/**
-	 * Shows the multi-connection mode enable state. See
-	 * {@link #multiConnectionMode}.
+	 * Shows the multi-connection mode enable state. If it is enabled, tends to
+	 * create new connections for each created or received stub. By default it is
+	 * disabled.
 	 * 
 	 * @return true if multi-connection mode is enabled, false otherwise
 	 */
@@ -266,7 +453,8 @@ public class RmiRegistry {
 	}
 
 	/**
-	 * Enable or disable multi-connection mode. See {@link #multiConnectionMode}.
+	 * Enable or disable multi-connection mode. If it is enabled, tends to create
+	 * new connections for each created or received stub. By default it is disabled.
 	 * 
 	 * @param multiConnectionMode true to enable, false to disable
 	 */
@@ -402,6 +590,10 @@ public class RmiRegistry {
 				e.printStackTrace();
 			}
 		}
+	}
+
+	public Authenticator getAuthenticator() {
+		return authenticator;
 	}
 
 	/**

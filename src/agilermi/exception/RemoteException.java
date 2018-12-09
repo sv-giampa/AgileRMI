@@ -15,19 +15,27 @@
  *  
  **/
 
-package agilermi;
+package agilermi.exception;
 
-import java.io.Serializable;
+import agilermi.RmiHandler;
 
 /**
- * Represents a generic message sent by a {@link RemoteInvocationHandler} to its
- * associated local {@link RmiHandler} and also it represents a message that can
- * be sent by a {@link RmiHandler} to another {@link RmiHandler} through the
- * network, so it is {@link Serializable}.
+ * This exception is thrown when a {@link RmiHandler} instance has been disposed
+ * before or during an invocation. This exception is received by the attached
+ * failure observers when the {@link RmiHandler#dispose()} method has been
+ * called. Subclasses of this exception represents more specific errors.
  * 
  * @author Salvatore Giampa'
  *
  */
-interface Handle extends Serializable {
+public class RemoteException extends RuntimeException {
+	private static final long serialVersionUID = 3064594603835597427L;
 
+	public RemoteException() {
+		super("The RmiHandler has been disposed");
+	}
+
+	public RemoteException(String message) {
+		super(message);
+	}
 }

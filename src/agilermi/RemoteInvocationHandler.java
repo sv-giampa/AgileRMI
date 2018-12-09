@@ -27,6 +27,9 @@ import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 
+import agilermi.exception.LocalAuthenticationException;
+import agilermi.exception.RemoteException;
+
 /**
  * Defines the invocation handler for the object stubs
  * 
@@ -65,7 +68,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		out.writeInt(address.getPort());
 	}
 
-	private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+	private void readObject(ObjectInputStream in)
+			throws IOException, ClassNotFoundException, LocalAuthenticationException {
 		objectId = in.readUTF();
 		String host = in.readUTF();
 		int port = in.readInt();
@@ -127,30 +131,34 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			}
 		}
 
-		if (handler.isDisposed()) {
-			if (handler.getRmiRegistry().isRemoteExceptionEnabled())
-				throw new RemoteException();
-		} else {
-
-			handler.putHandle(invocation);
-
-			try {
-				synchronized (invocation) {
-					while (!invocation.returned) {
-						invocation.wait();
-					}
-
-					if (invocation.thrownException != null) {
-						invocation.thrownException.fillInStackTrace();
-						throw invocation.thrownException;
-					} else if (hashCodeCall) {
-						hashCode = (Integer) invocation.returnValue;
-						hashCodeRequested = true;
-					}
+		try {
+			synchronized (handler) {
+				if (!handler.isDisposed()) {
+					handler.putHandle(invocation);
 				}
-			} catch (InterruptedException e) {
 			}
 
+			if (handler.isDisposed()) {
+				if (handler.getRmiRegistry().isRemoteExceptionEnabled())
+					throw new RemoteException();
+			} else {
+
+				invocation.semaphone.acquire();
+
+				/*
+				 * synchronized (invocation) { while (!invocation.returned) { invocation.wait();
+				 * } }
+				 */
+
+				if (invocation.thrownException != null) {
+					invocation.thrownException.fillInStackTrace();
+					throw invocation.thrownException;
+				} else if (hashCodeCall) {
+					hashCode = (Integer) invocation.returnValue;
+					hashCodeRequested = true;
+				}
+			}
+		} catch (InterruptedException e) {
 		}
 
 		Class<?> returnType = method.getReturnType();

@@ -11,7 +11,7 @@ public class AgileRmiServer {
 		System.out.println("Server started.");
 
 		// rmi registry creation
-		RmiRegistry rmiRegistry = new RmiRegistry(3031, false);
+		RmiRegistry rmiRegistry = RmiRegistry.builder().enableListener(3031, true).build();
 
 		// remote objects creation
 		Service service = new ServiceImpl();

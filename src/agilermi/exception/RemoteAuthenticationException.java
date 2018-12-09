@@ -15,19 +15,15 @@
  *  
  **/
 
-package agilermi;
+package agilermi.exception;
 
-import java.io.Serializable;
+import java.io.IOException;
 
-/**
- * Represents a generic message sent by a {@link RemoteInvocationHandler} to its
- * associated local {@link RmiHandler} and also it represents a message that can
- * be sent by a {@link RmiHandler} to another {@link RmiHandler} through the
- * network, so it is {@link Serializable}.
- * 
- * @author Salvatore Giampa'
- *
- */
-interface Handle extends Serializable {
+public class RemoteAuthenticationException extends IOException {
 
+	private static final long serialVersionUID = 5828990096774080908L;
+
+	public RemoteAuthenticationException() {
+		super("the local user cannot be authenticated on the remote machine");
+	}
 }
