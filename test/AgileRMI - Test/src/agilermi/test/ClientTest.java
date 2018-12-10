@@ -1,6 +1,7 @@
 package agilermi.test;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -10,8 +11,7 @@ import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -37,13 +37,13 @@ class ClientTest {
 	RmiHandler rmiHandler;
 	TestIF stub;
 
-	@BeforeAll
+	@BeforeEach
 	void setUp() throws Exception {
 		serverSetUp();
 		clientSetUp();
 	}
 
-	@AfterAll
+	@AfterEach
 	void unSet() throws Exception {
 		clientRegistry.finalize();
 		serverRegistry.finalize();
@@ -61,7 +61,7 @@ class ClientTest {
 			public boolean authenticate(InetSocketAddress remoteAddress, String authId, String passphrase) {
 				System.out.println("authentication [remoteAddress: " + remoteAddress + "; authId: " + authId
 						+ "; passphrase: " + passphrase + "]");
-				return authId.equals("testId") && passphrase.equals("testPass");
+				return "testId".equals(authId) && "testPass".equals(passphrase);
 			}
 		};
 
@@ -85,9 +85,10 @@ class ClientTest {
 		clientRegistry.attachFailureObserver(new FailureObserver() {
 			@Override
 			public void failure(RmiHandler rmiHandler, Exception exception) {
-				System.out.println("The object peer generated an error:\n" + exception);
 				assertEquals(rmiHandler, rmiHandler);
-				assertEquals(true, rmiHandler.isDisposed());
+				if (rmiHandler.isDisposed())
+					return;
+				System.out.println("The RMI handler generated an error:\n" + exception);
 			}
 		});
 
@@ -97,12 +98,12 @@ class ClientTest {
 		 * referenced remotely by the server to the local client)
 		 */
 		clientRegistry.exportInterface(TestObserver.class);
+		stub = (TestIF) clientRegistry.getStub("localhost", 3031, "test", TestIF.class);
 	}
 
 	@BeforeEach
 	void getStub() throws UnknownHostException, IOException {
 		// - create the stubs for the wanted remote objects
-		stub = (TestIF) clientRegistry.getStub("localhost", 3031, "test", TestIF.class);
 	}
 
 	@Test
@@ -170,7 +171,7 @@ class ClientTest {
 			@Override
 			public void update(TestIF test) {
 				observerCalled = true;
-				assertEquals(stub, test); // test remote reference and flyweight pattern
+				assertTrue(stub.equals(test));
 			}
 		};
 

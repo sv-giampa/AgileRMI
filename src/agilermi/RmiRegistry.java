@@ -28,6 +28,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 import javax.net.ServerSocketFactory;
@@ -48,6 +49,11 @@ import agilermi.exception.RemoteException;
  */
 public class RmiRegistry {
 
+	// identifies the current instance of RmiRegistry. It serves to avoid loop-back
+	// connections and to replace remote pointer that point to an object on this
+	// same registry with their local instance
+	final String registryKey;
+
 	// lock for synchronized access to this instance
 	private Object lock = new Object();
 
@@ -63,6 +69,7 @@ public class RmiRegistry {
 	// port of the TCP listener
 	private int port;
 
+	// socket factories
 	private ServerSocketFactory ssFactory;
 	private SocketFactory sFactory;
 
@@ -90,6 +97,7 @@ public class RmiRegistry {
 	private String authIdentifier;
 	private String authPassphrase;
 
+	// authenticator objects that authenticates and authorize users
 	private Authenticator authenticator;
 
 	/**
@@ -236,8 +244,9 @@ public class RmiRegistry {
 		 * @throws IOException if an I\O error occurs
 		 */
 		public RmiRegistry build() throws IOException {
-			return new RmiRegistry(listenerPort, listenerDaemon, listenerEnable, serverSocketFactory, socketFactory,
-					filterFactory, authenticator, authIdentifier, authPassphrase);
+			RmiRegistry rmiRegistry = new RmiRegistry(listenerPort, listenerDaemon, listenerEnable, serverSocketFactory,
+					socketFactory, filterFactory, authenticator, authIdentifier, authPassphrase);
+			return rmiRegistry;
 		}
 	}
 
@@ -377,6 +386,11 @@ public class RmiRegistry {
 		if (socketFactory == null)
 			socketFactory = SocketFactory.getDefault();
 
+		Random random = new Random();
+		this.registryKey = Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong())
+				+ Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong())
+				+ Long.toHexString(random.nextLong());
+
 		this.ssFactory = serverSocketFactory;
 		this.sFactory = socketFactory;
 		this.filterFactory = filterFactory;
@@ -435,6 +449,7 @@ public class RmiRegistry {
 	 */
 	@Override
 	public synchronized void finalize() {
+		disableListener();
 		detachFailureObserver(failureObserver);
 		for (List<RmiHandler> rmiHandlers : handlers.values())
 			for (RmiHandler rmiHandler : rmiHandlers)
@@ -611,7 +626,7 @@ public class RmiRegistry {
 						handlers.put(rmiHandler.getInetSocketAddress(), new ArrayList<>(1));
 					handlers.get(rmiHandler.getInetSocketAddress()).add(rmiHandler);
 				} catch (IOException e) {
-					e.printStackTrace();
+					// e.printStackTrace();
 				}
 		};
 	};

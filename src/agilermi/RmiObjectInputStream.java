@@ -76,17 +76,15 @@ class RmiObjectInputStream extends ObjectInputStream {
 		if (Proxy.isProxyClass(obj.getClass())) {
 			InvocationHandler ih = Proxy.getInvocationHandler(obj);
 
-//			if (ih instanceof RemoteInvocationHandler) {
-//				RemoteInvocationHandler sih = (RemoteInvocationHandler) ih;
-//				Class<?>[] interfaces = obj.getClass().getInterfaces();
-//				InetSocketAddress isa = sih.handler.getInetSocketAddress();
-//				Object found = rmiRegistry.getStub(isa.getHostString(), isa.getPort(), sih.objectId, interfaces);
-//				if (found != null)
-//					obj = found;
-//			 }
+			if (ih instanceof RemoteInvocationHandler) {
+				RemoteInvocationHandler sih = (RemoteInvocationHandler) ih;
+				if (sih.registryKey.equals(rmiRegistry.registryKey)) {
+					System.out.println("remote reference rplaced with local object");
+					return rmiRegistry.getRemoteObject(sih.getObjectId());
+				}
+			}
 
 			if (ih instanceof ReferenceInvocationHandler) {
-
 				ReferenceInvocationHandler lih = (ReferenceInvocationHandler) ih;
 				Class<?>[] interfaces = obj.getClass().getInterfaces();
 				Object found = rmiRegistry.getStub(remoteAddress, remotePort, lih.getObjectId(), interfaces);

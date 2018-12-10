@@ -98,6 +98,10 @@ public class RmiHandler {
 	// remote references requested by the other machine
 	private Set<String> references = new TreeSet<>();
 
+	// on the other side of the connection there is a RmiHandler that lies on this
+	// same machine and uses the same registry of this one
+	private boolean sameRegistryAuthentication = false;
+
 	/**
 	 * Gets the remote connection details of this peer
 	 * 
@@ -207,6 +211,77 @@ public class RmiHandler {
 	}
 
 	/**
+	 * Executes the authentication negotiation
+	 * 
+	 * @throws IOException                   if an I/O error occurs
+	 * @throws LocalAuthenticationException  if the local {@link RmiHandler} cannot
+	 *                                       authenticate the remote one
+	 * @throws RemoteAuthenticationException if the remote {@link RmiHandler} cannot
+	 *                                       authenticate the local one
+	 */
+	private void authentication() throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
+		// checks that on the other side of the connection there is a handler that uses
+		// the same registry of this one
+		out.writeUTF(rmiRegistry.registryKey);
+		out.flush();
+		String remoteRegistryKey = in.readUTF();
+
+		if (remoteRegistryKey.equals(rmiRegistry.registryKey)) {
+			sameRegistryAuthentication = true;
+			out.writeBoolean(true);
+			out.flush();
+		} else {
+			sameRegistryAuthentication = false;
+			out.writeBoolean(false);
+			out.flush();
+		}
+
+		if (in.readBoolean()) // the remote handler recognized the registry key
+			return;
+
+		// if on the other side there is not the same registry of this handler, do
+		// normal authentication
+		out.writeUnshared(rmiRegistry.getAuthIdentifier());
+		out.writeUnshared(rmiRegistry.getAuthPassphrase());
+		out.flush();
+
+		String authId, authPass;
+		try {
+			authId = (String) in.readUnshared();
+			authPass = (String) in.readUnshared();
+		} catch (Exception e) {
+			e.printStackTrace();
+			try {
+				out.writeBoolean(false);
+				out.flush();
+			} catch (IOException e1) {
+			}
+			throw new LocalAuthenticationException();
+		}
+
+		if (rmiRegistry.getAuthenticator() == null
+				|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, authId, authPass)) {
+			try {
+				out.writeBoolean(true);
+				out.flush();
+			} catch (IOException e1) {
+			}
+		} else {
+			try {
+				out.writeBoolean(false);
+				out.flush();
+			} catch (IOException e1) {
+			}
+			throw new LocalAuthenticationException();
+		}
+
+		boolean authResult = in.readBoolean();
+
+		if (!authResult)
+			throw new RemoteAuthenticationException();
+	}
+
+	/**
 	 * Constructs a new RmiHandler over the connection specified by the given
 	 * socket, with the specified {@link RmiRegistry}.
 	 * 
@@ -254,6 +329,8 @@ public class RmiHandler {
 		out.flush();
 		in = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress);
 
+		// send authentication
+		authentication();
 		receiver.setDaemon(true);
 		sender.setDaemon(true);
 		receiver.start();
@@ -325,8 +402,6 @@ public class RmiHandler {
 
 			Handle handle = null;
 			try {
-				// send authentication
-				authentication();
 
 				startRead.release();
 
@@ -368,7 +443,7 @@ public class RmiHandler {
 				}
 			} catch (IOException | InterruptedException e) { // something gone wrong, destroy the handler
 
-				e.printStackTrace();
+				// e.printStackTrace();
 
 				if (handle != null) {
 					if (handle instanceof InvocationHandle) {
@@ -383,8 +458,6 @@ public class RmiHandler {
 
 				dispose();
 
-				e.printStackTrace();
-
 				try {
 					socket.close();
 				} catch (Exception e1) {
@@ -392,46 +465,6 @@ public class RmiHandler {
 
 				rmiRegistry.sendRmiHandlerFailure(RmiHandler.this, e);
 			}
-		}
-
-		/**
-		 * Executes the authentication negotiation
-		 * 
-		 * @throws IOException                   if an I/O error occurs
-		 * @throws LocalAuthenticationException  if the local {@link RmiHandler} cannot
-		 *                                       authenticate the remote one
-		 * @throws RemoteAuthenticationException if the remote {@link RmiHandler} cannot
-		 *                                       authenticate the local one
-		 */
-		private void authentication() throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
-			out.writeUnshared(rmiRegistry.getAuthIdentifier());
-			out.writeUnshared(rmiRegistry.getAuthPassphrase());
-			out.flush();
-
-			String authId, authPass;
-			try {
-				authId = (String) in.readUnshared();
-				authPass = (String) in.readUnshared();
-			} catch (ClassNotFoundException e) {
-				out.writeBoolean(false);
-				out.flush();
-				throw new LocalAuthenticationException();
-			}
-
-			if (rmiRegistry.getAuthenticator() == null
-					|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, authId, authPass)) {
-				out.writeBoolean(true);
-				out.flush();
-			} else {
-				out.writeBoolean(false);
-				out.flush();
-				throw new LocalAuthenticationException();
-			}
-
-			boolean authResult = in.readBoolean();
-
-			if (!authResult)
-				throw new RemoteAuthenticationException();
 		}
 	};
 
@@ -466,8 +499,9 @@ public class RmiHandler {
 						Method method = object.getClass().getMethod(invocation.method, invocation.parameterTypes);
 
 						// get authorization
-						boolean authorized = rmiRegistry.getAuthenticator() == null || rmiRegistry.getAuthenticator()
-								.authorize(rmiRegistry.getAuthIdentifier(), object, method);
+						boolean authorized = sameRegistryAuthentication || rmiRegistry.getAuthenticator() == null
+								|| rmiRegistry.getAuthenticator().authorize(rmiRegistry.getAuthIdentifier(), object,
+										method);
 
 						// if authorized, starts the delegation thread
 						if (authorized) {
@@ -483,7 +517,7 @@ public class RmiHandler {
 									retHandle.returnClass = method.getReturnType();
 
 								} catch (InvocationTargetException e) {
-									e.printStackTrace();
+									// e.printStackTrace();
 									retHandle.thrownException = e.getCause();
 								} catch (NoSuchMethodException e) {
 									e.printStackTrace();
@@ -534,10 +568,6 @@ public class RmiHandler {
 
 							// notify the invocation handler that is waiting on it
 							invocation.semaphone.release();
-
-							/*
-							 * synchronized (invocation) { invocation.notifyAll(); }
-							 */
 						}
 					} else if (handle instanceof FinalizeHandle) {
 						FinalizeHandle finHandle = (FinalizeHandle) handle;
@@ -558,7 +588,7 @@ public class RmiHandler {
 				}
 			} catch (Exception e) { // something gone wrong, destroy this handler and dispose it
 
-				e.printStackTrace();
+				// e.printStackTrace();
 
 				if (disposed)
 					return;

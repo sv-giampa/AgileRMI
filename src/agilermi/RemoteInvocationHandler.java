@@ -40,14 +40,16 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private static final long serialVersionUID = 2428505156272752228L;
 
 	private String objectId;
-	private RmiHandler handler;
+	private transient RmiHandler handler;
 
 	private boolean hashCodeRequested = false;
 	private int hashCode;
+	String registryKey;
 
 	public RemoteInvocationHandler(String objectId, RmiHandler rmiHandler) {
 		this.objectId = objectId;
 		this.handler = rmiHandler;
+		this.registryKey = rmiHandler.getRmiRegistry().registryKey;
 		try {
 			handler.putHandle(new NewReferenceHandle(objectId));
 		} catch (InterruptedException e) {
@@ -62,15 +64,15 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 					+ "\tWe cannot say what will be read on the input stream of the other side!\n"
 					+ "\tProbably this stub will not be able to establish the connection with its remote counterpart!\n"
 					+ "\tWriting stub to a non-RMI output stream...");
+		out.defaultWriteObject();
 		InetSocketAddress address = handler.getInetSocketAddress();
-		out.writeUTF(objectId);
 		out.writeUTF(address.getHostString());
 		out.writeInt(address.getPort());
 	}
 
 	private void readObject(ObjectInputStream in)
 			throws IOException, ClassNotFoundException, LocalAuthenticationException {
-		objectId = in.readUTF();
+		in.defaultReadObject();
 		String host = in.readUTF();
 		int port = in.readInt();
 
@@ -144,11 +146,6 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			} else {
 
 				invocation.semaphone.acquire();
-
-				/*
-				 * synchronized (invocation) { while (!invocation.returned) { invocation.wait();
-				 * } }
-				 */
 
 				if (invocation.thrownException != null) {
 					invocation.thrownException.fillInStackTrace();
