@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -442,6 +443,11 @@ public class RmiRegistry {
 			enableListener(listenerPort, listenerDaemon);
 	}
 
+	/*
+	 * public void setAuthentication(String authId, String authPassphrase) {
+	 * this.auth }
+	 */
+
 	/**
 	 * Finalizes this registry instance and all its current open connections. This
 	 * method is also called by the Garbage Collector when the registry is no longer
@@ -449,10 +455,10 @@ public class RmiRegistry {
 	 */
 	@Override
 	public synchronized void finalize() {
-		disableListener();
 		detachFailureObserver(failureObserver);
-		for (List<RmiHandler> rmiHandlers : handlers.values())
-			for (RmiHandler rmiHandler : rmiHandlers)
+		disableListener();
+		for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext(); it.remove())
+			for (RmiHandler rmiHandler : handlers.get(it.next()))
 				rmiHandler.dispose();
 	}
 

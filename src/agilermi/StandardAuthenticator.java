@@ -24,6 +24,8 @@ import java.util.TreeSet;
 public class StandardAuthenticator implements Authenticator, Serializable {
 	private static final long serialVersionUID = -3193956625893347894L;
 
+	private Object lock = new String();
+
 	// user level authorization
 	private static final int USER_LEVEL = 0;
 	// role level authorization
@@ -78,7 +80,7 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 
 	@Override
 	public boolean authenticate(InetSocketAddress remoteAddress, String authId, String passphrase) {
-		synchronized (authenticationMap) {
+		synchronized (lock) {
 			if (!authenticationMap.containsKey(authId))
 				return false;
 			try {
@@ -102,7 +104,7 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *         identifier was already registered
 	 */
 	public boolean register(String authId, String passphrase) {
-		synchronized (authenticationMap) {
+		synchronized (lock) {
 			if (authenticationMap.containsKey(authId))
 				return false;
 			try {
@@ -133,12 +135,36 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	}
 
 	/**
+	 * Change the pass-phrase of a registered authentication identifier
+	 * 
+	 * @param authId     authentication identifier
+	 * @param passphrase new pass-phrase
+	 * @return true if operation was successful, false if the user is not registered
+	 *         or the hash algorithm is not available
+	 */
+	public boolean changePassphrase(String authId, String passphrase) {
+		synchronized (lock) {
+			if (!isRegistered(authId))
+				return false;
+			try {
+				MessageDigest messageDigest = MessageDigest.getInstance("SHA-1");
+				byte[] computedDigest = messageDigest.digest(passphrase.getBytes());
+				authenticationMap.put(authId, computedDigest);
+				return true;
+			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+			}
+			return false;
+		}
+	}
+
+	/**
 	 * Unregister an identity.
 	 * 
 	 * @param authId the authentication identifier to unregister
 	 */
 	public void unregister(String authId) {
-		synchronized (authenticationMap) {
+		synchronized (lock) {
 			authenticationMap.remove(authId);
 			roleMap.remove(authId);
 
@@ -161,13 +187,16 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 * @param role the role to create
 	 */
 	public void createRole(String role) {
-		if (roles.contains(role))
-			return;
-		roles.add(role);
-		roleOMKeys.put(role, new HashSet<>());
-		roleMKeys.put(role, new HashSet<>());
-		roleOKeys.put(role, new HashSet<>());
-		roleCKeys.put(role, new HashSet<>());
+		synchronized (lock) {
+			if (roles.contains(role))
+				return;
+			roles.add(role);
+			roleOMKeys.put(role, new HashSet<>());
+			roleMKeys.put(role, new HashSet<>());
+			roleOKeys.put(role, new HashSet<>());
+			roleCKeys.put(role, new HashSet<>());
+
+		}
 	}
 
 	/**
@@ -176,17 +205,19 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 * @param role the role to delete
 	 */
 	public void deleteRole(String role) {
-		if (!roles.contains(role))
-			return;
-		roles.remove(role);
-		om[ROLE_LEVEL][POSITIVE_SET].removeAll(roleOMKeys.get(role));
-		om[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleOMKeys.remove(role));
-		m[ROLE_LEVEL][POSITIVE_SET].removeAll(roleMKeys.get(role));
-		m[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleMKeys.remove(role));
-		o[ROLE_LEVEL][POSITIVE_SET].removeAll(roleOKeys.get(role));
-		o[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleOKeys.remove(role));
-		c[ROLE_LEVEL][POSITIVE_SET].removeAll(roleCKeys.get(role));
-		c[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleCKeys.remove(role));
+		synchronized (lock) {
+			if (!roles.contains(role))
+				return;
+			roles.remove(role);
+			om[ROLE_LEVEL][POSITIVE_SET].removeAll(roleOMKeys.get(role));
+			om[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleOMKeys.remove(role));
+			m[ROLE_LEVEL][POSITIVE_SET].removeAll(roleMKeys.get(role));
+			m[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleMKeys.remove(role));
+			o[ROLE_LEVEL][POSITIVE_SET].removeAll(roleOKeys.get(role));
+			o[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleOKeys.remove(role));
+			c[ROLE_LEVEL][POSITIVE_SET].removeAll(roleCKeys.get(role));
+			c[ROLE_LEVEL][NEGATIVE_SET].removeAll(roleCKeys.remove(role));
+		}
 	}
 
 	/**
@@ -200,7 +231,9 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 			throw new IllegalStateException("authentication identifier not registered");
 		if (!roles.contains(role))
 			throw new IllegalStateException("role not created");
-		roleMap.get(authId).add(role);
+		synchronized (lock) {
+			roleMap.get(authId).add(role);
+		}
 	}
 
 	/**
@@ -210,9 +243,11 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 * @param role   the role to remove
 	 */
 	public void removeRole(String authId, String role) {
-		if (!isRegistered(authId))
-			return;
-		roleMap.get(authId).remove(role);
+		synchronized (lock) {
+			if (!isRegistered(authId))
+				return;
+			roleMap.get(authId).remove(role);
+		}
 	}
 
 	/**
@@ -252,15 +287,17 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setIdAuthorization(String authId, Object object, Method method, int authorized) {
-		Set<OMKey> set = authIdOMKeys.get(authId);
-		OMKey key = new OMKey(authId, object, method);
-		if (authorized < 0 || authorized > 1) {
-			om[USER_LEVEL][0].remove(key);
-			om[USER_LEVEL][1].remove(key);
-			set.remove(key);
-		} else {
-			om[USER_LEVEL][authorized].add(key);
-			set.add(key);
+		synchronized (lock) {
+			Set<OMKey> set = authIdOMKeys.get(authId);
+			OMKey key = new OMKey(authId, object, method);
+			if (authorized < 0 || authorized > 1) {
+				om[USER_LEVEL][0].remove(key);
+				om[USER_LEVEL][1].remove(key);
+				set.remove(key);
+			} else {
+				om[USER_LEVEL][authorized].add(key);
+				set.add(key);
+			}
 		}
 	}
 
@@ -273,15 +310,17 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setIdAuthorization(String authId, Method method, int authorized) {
-		Set<MKey> set = authIdMKeys.get(authId);
-		MKey key = new MKey(authId, method);
-		if (authorized < 0 || authorized > 1) {
-			m[USER_LEVEL][0].remove(key);
-			m[USER_LEVEL][1].remove(key);
-			set.remove(key);
-		} else {
-			m[USER_LEVEL][authorized].add(key);
-			set.add(key);
+		synchronized (lock) {
+			Set<MKey> set = authIdMKeys.get(authId);
+			MKey key = new MKey(authId, method);
+			if (authorized < 0 || authorized > 1) {
+				m[USER_LEVEL][0].remove(key);
+				m[USER_LEVEL][1].remove(key);
+				set.remove(key);
+			} else {
+				m[USER_LEVEL][authorized].add(key);
+				set.add(key);
+			}
 		}
 	}
 
@@ -294,15 +333,17 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setIdAuthorization(String authId, Object object, int authorized) {
-		Set<OKey> set = authIdOKeys.get(authId);
-		OKey key = new OKey(authId, object);
-		if (authorized < 0 || authorized > 1) {
-			o[USER_LEVEL][0].remove(key);
-			o[USER_LEVEL][1].remove(key);
-			set.add(key);
-		} else {
-			o[USER_LEVEL][authorized].add(new OKey(authId, object));
-			set.add(key);
+		synchronized (lock) {
+			Set<OKey> set = authIdOKeys.get(authId);
+			OKey key = new OKey(authId, object);
+			if (authorized < 0 || authorized > 1) {
+				o[USER_LEVEL][0].remove(key);
+				o[USER_LEVEL][1].remove(key);
+				set.add(key);
+			} else {
+				o[USER_LEVEL][authorized].add(new OKey(authId, object));
+				set.add(key);
+			}
 		}
 	}
 
@@ -315,15 +356,17 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setIdAuthorization(String authId, Class<?> cls, int authorized) {
-		Set<CKey> set = authIdCKeys.get(authId);
-		CKey key = new CKey(authId, cls);
-		if (authorized < 0 || authorized > 1) {
-			c[USER_LEVEL][0].remove(key);
-			c[USER_LEVEL][1].remove(key);
-			set.add(key);
-		} else {
-			c[USER_LEVEL][authorized].add(key);
-			set.add(key);
+		synchronized (lock) {
+			Set<CKey> set = authIdCKeys.get(authId);
+			CKey key = new CKey(authId, cls);
+			if (authorized < 0 || authorized > 1) {
+				c[USER_LEVEL][0].remove(key);
+				c[USER_LEVEL][1].remove(key);
+				set.add(key);
+			} else {
+				c[USER_LEVEL][authorized].add(key);
+				set.add(key);
+			}
 		}
 	}
 
@@ -342,12 +385,14 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setRoleAuthorization(String role, Object object, Method method, int authorized) {
-		OMKey key = new OMKey(role, object, method);
-		if (authorized < 0 || authorized > 1) {
-			om[ROLE_LEVEL][0].remove(key);
-			om[ROLE_LEVEL][1].remove(key);
-		} else {
-			om[ROLE_LEVEL][authorized].add(key);
+		synchronized (lock) {
+			OMKey key = new OMKey(role, object, method);
+			if (authorized < 0 || authorized > 1) {
+				om[ROLE_LEVEL][0].remove(key);
+				om[ROLE_LEVEL][1].remove(key);
+			} else {
+				om[ROLE_LEVEL][authorized].add(key);
+			}
 		}
 	}
 
@@ -360,12 +405,14 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setRoleAuthorization(String role, Method method, int authorized) {
-		MKey key = new MKey(role, method);
-		if (authorized < 0 || authorized > 1) {
-			m[ROLE_LEVEL][0].remove(key);
-			m[ROLE_LEVEL][1].remove(key);
-		} else {
-			m[ROLE_LEVEL][authorized].add(key);
+		synchronized (lock) {
+			MKey key = new MKey(role, method);
+			if (authorized < 0 || authorized > 1) {
+				m[ROLE_LEVEL][0].remove(key);
+				m[ROLE_LEVEL][1].remove(key);
+			} else {
+				m[ROLE_LEVEL][authorized].add(key);
+			}
 		}
 	}
 
@@ -378,12 +425,14 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setRoleAuthorization(String role, Object object, int authorized) {
-		OKey key = new OKey(role, object);
-		if (authorized < 0 || authorized > 1) {
-			o[ROLE_LEVEL][0].remove(key);
-			o[ROLE_LEVEL][1].remove(key);
-		} else {
-			o[ROLE_LEVEL][authorized].add(key);
+		synchronized (lock) {
+			OKey key = new OKey(role, object);
+			if (authorized < 0 || authorized > 1) {
+				o[ROLE_LEVEL][0].remove(key);
+				o[ROLE_LEVEL][1].remove(key);
+			} else {
+				o[ROLE_LEVEL][authorized].add(key);
+			}
 		}
 	}
 
@@ -396,12 +445,14 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	 *                   authorization
 	 */
 	public void setRoleAuthorization(String role, Class<?> cls, int authorized) {
-		CKey key = new CKey(role, cls);
-		if (authorized < 0 || authorized > 1) {
-			c[ROLE_LEVEL][0].remove(key);
-			c[ROLE_LEVEL][1].remove(key);
-		} else {
-			c[ROLE_LEVEL][authorized].add(key);
+		synchronized (lock) {
+			CKey key = new CKey(role, cls);
+			if (authorized < 0 || authorized > 1) {
+				c[ROLE_LEVEL][0].remove(key);
+				c[ROLE_LEVEL][1].remove(key);
+			} else {
+				c[ROLE_LEVEL][authorized].add(key);
+			}
 		}
 	}
 
@@ -412,56 +463,57 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 
 	@Override
 	public boolean authorize(String authId, Object object, Method method) {
-
-		if (om[USER_LEVEL][POSITIVE_SET].contains(new OMKey(authId, object, method)))
-			return true;
-		if (om[USER_LEVEL][NEGATIVE_SET].contains(new OMKey(authId, object, method)))
-			return false;
-
-		if (m[USER_LEVEL][POSITIVE_SET].contains(new MKey(authId, method)))
-			return true;
-		if (m[USER_LEVEL][NEGATIVE_SET].contains(new MKey(authId, method)))
-			return false;
-
-		if (o[USER_LEVEL][POSITIVE_SET].contains(new OKey(authId, object)))
-			return true;
-		if (o[USER_LEVEL][NEGATIVE_SET].contains(new OKey(authId, object)))
-			return false;
-
-		if (c[USER_LEVEL][POSITIVE_SET].contains(new CKey(authId, object.getClass())))
-			return true;
-		if (c[USER_LEVEL][NEGATIVE_SET].contains(new CKey(authId, object.getClass())))
-			return false;
-
-		Set<String> userRoles = roleMap.get(authId);
-		if (userRoles != null && userRoles.size() > 0) {
-			boolean unauthorized = false;
-			for (String role : userRoles) {
-				if (om[ROLE_LEVEL][POSITIVE_SET].contains(new OMKey(role, object, method)))
-					return true;
-				if (om[ROLE_LEVEL][NEGATIVE_SET].contains(new OMKey(role, object, method)))
-					unauthorized = true;
-
-				if (m[ROLE_LEVEL][POSITIVE_SET].contains(new MKey(role, method)))
-					return true;
-				if (m[ROLE_LEVEL][NEGATIVE_SET].contains(new MKey(role, method)))
-					unauthorized = true;
-
-				if (o[ROLE_LEVEL][POSITIVE_SET].contains(new OKey(role, object)))
-					return true;
-				if (o[ROLE_LEVEL][NEGATIVE_SET].contains(new OKey(role, object)))
-					unauthorized = true;
-
-				if (c[ROLE_LEVEL][POSITIVE_SET].contains(new CKey(role, object.getClass())))
-					return true;
-				if (c[ROLE_LEVEL][NEGATIVE_SET].contains(new CKey(role, object.getClass())))
-					unauthorized = true;
-			}
-			if (unauthorized)
+		synchronized (lock) {
+			if (om[USER_LEVEL][POSITIVE_SET].contains(new OMKey(authId, object, method)))
+				return true;
+			if (om[USER_LEVEL][NEGATIVE_SET].contains(new OMKey(authId, object, method)))
 				return false;
-		}
 
-		return defaultAuthorization;
+			if (m[USER_LEVEL][POSITIVE_SET].contains(new MKey(authId, method)))
+				return true;
+			if (m[USER_LEVEL][NEGATIVE_SET].contains(new MKey(authId, method)))
+				return false;
+
+			if (o[USER_LEVEL][POSITIVE_SET].contains(new OKey(authId, object)))
+				return true;
+			if (o[USER_LEVEL][NEGATIVE_SET].contains(new OKey(authId, object)))
+				return false;
+
+			if (c[USER_LEVEL][POSITIVE_SET].contains(new CKey(authId, object.getClass())))
+				return true;
+			if (c[USER_LEVEL][NEGATIVE_SET].contains(new CKey(authId, object.getClass())))
+				return false;
+
+			Set<String> userRoles = roleMap.get(authId);
+			if (userRoles != null && userRoles.size() > 0) {
+				boolean unauthorized = false;
+				for (String role : userRoles) {
+					if (om[ROLE_LEVEL][POSITIVE_SET].contains(new OMKey(role, object, method)))
+						return true;
+					if (om[ROLE_LEVEL][NEGATIVE_SET].contains(new OMKey(role, object, method)))
+						unauthorized = true;
+
+					if (m[ROLE_LEVEL][POSITIVE_SET].contains(new MKey(role, method)))
+						return true;
+					if (m[ROLE_LEVEL][NEGATIVE_SET].contains(new MKey(role, method)))
+						unauthorized = true;
+
+					if (o[ROLE_LEVEL][POSITIVE_SET].contains(new OKey(role, object)))
+						return true;
+					if (o[ROLE_LEVEL][NEGATIVE_SET].contains(new OKey(role, object)))
+						unauthorized = true;
+
+					if (c[ROLE_LEVEL][POSITIVE_SET].contains(new CKey(role, object.getClass())))
+						return true;
+					if (c[ROLE_LEVEL][NEGATIVE_SET].contains(new CKey(role, object.getClass())))
+						unauthorized = true;
+				}
+				if (unauthorized)
+					return false;
+			}
+
+			return defaultAuthorization;
+		}
 	}
 
 	/**

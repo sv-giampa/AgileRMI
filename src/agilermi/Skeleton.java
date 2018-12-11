@@ -92,12 +92,18 @@ class Skeleton {
 		if (refGlobalCounter == 0 && names.isEmpty()) {
 			if (scheduledRemove != null)
 				scheduledRemove.interrupt();
+
+			// schedule the skeleton remove operation to be executed afte 10 seconds, to
+			// avoid errors caused by network latecies (e.g. when a machine pass a remote
+			// reference of this skeleton to another machine)
 			scheduledRemove = new Thread(() -> {
+				// System.out.println("[Skeleton] scheduleRemove: start");
 				try {
 					Thread.sleep(10000);
 				} catch (InterruptedException e) {
 					return;
 				}
+				// System.out.println("[Skeleton] scheduleRemove: removed");
 				synchronized (Skeleton.this) {
 					if (refGlobalCounter == 0 && names.isEmpty()) {
 						rmiRegistry.unpublish(object);
