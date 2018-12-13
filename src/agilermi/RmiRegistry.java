@@ -18,6 +18,7 @@
 package agilermi;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -31,12 +32,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLSocketFactory;
 
 import agilermi.exception.RemoteException;
+import agilermi.handle.RemoteInterfaceHandle;
 
 /**
  * Defines a class that accepts new TCP connections over a port of the local
@@ -94,9 +97,80 @@ public class RmiRegistry {
 	// multi connection mode
 	private boolean multiConnectionMode = false;
 
-	// authentication details
-	private String authIdentifier;
-	private String authPassphrase;
+	// map: "address:port" -> "authIdentifier:authPassphrase"
+	private Map<String, String[]> authenticationMap = new TreeMap<>();
+
+	/**
+	 * Adds authentication details for a remote host
+	 * 
+	 * @param host           the remote host
+	 * @param port           the remote port
+	 * @param authId         the authentication identifier
+	 * @param authPassphrase the authentication pass-phrase
+	 */
+	public void setAuthentication(String host, int port, String authId, String authPassphrase) {
+		try {
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
+		}
+		String key = host + ":" + port;
+		String[] auth = new String[] { authId, authPassphrase };
+		authenticationMap.put(key, auth);
+	}
+
+	/**
+	 * Removes authentication details for a remote host
+	 * 
+	 * @param host the remote host
+	 * @param port the remote port
+	 */
+	public void removeAuthentication(String host, int port) {
+		try {
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
+		}
+		String key = host + ":" + port;
+		authenticationMap.remove(key);
+	}
+
+	/**
+	 * Package-level method to get authentication relative to a remote process.
+	 * 
+	 * @param host the remote host
+	 * @param port the remote port
+	 * 
+	 * @return String array that has authentication identifier at the 0 position and
+	 *         the authentication pass-phrase at the 1 position or null if no
+	 *         authentication has been specified for the rmeote process
+	 * 
+	 */
+	String[] getAuthentication(String host, int port) {
+		try {
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
+		}
+		String key = host + ":" + port;
+		return authenticationMap.get(key);
+	}
+
+	/**
+	 * Package-level method to get authentication relative to a remote process.
+	 * 
+	 * @param address the remote address
+	 * @param port    the remote port
+	 * 
+	 * @return String array that has authentication identifier at the 0 position and
+	 *         the authentication pass-phrase at the 1 position or null if no
+	 *         authentication has been specified for the rmeote process
+	 */
+	String[] getAuthentication(InetAddress address, int port) {
+		String host = address.getCanonicalHostName();
+		String key = host + ":" + port;
+		return authenticationMap.get(key);
+	}
 
 	// authenticator objects that authenticates and authorize users
 	private Authenticator authenticator;
@@ -153,22 +227,6 @@ public class RmiRegistry {
 
 		// authentication
 		private Authenticator authenticator;
-		private String authIdentifier;
-		private String authPassphrase;
-
-		/**
-		 * Set the data used to authenticate new connection from this registry on the
-		 * remote machines.
-		 * 
-		 * @param authIdentifier authentication identifier
-		 * @param authPassphrase authentication pass-phrase
-		 * @return this builder
-		 */
-		public Builder setAuthentication(String authIdentifier, String authPassphrase) {
-			this.authIdentifier = authIdentifier;
-			this.authPassphrase = authPassphrase;
-			return this;
-		}
 
 		/**
 		 * Set an {@link Authenticator} object that intercept authentication and
@@ -246,27 +304,9 @@ public class RmiRegistry {
 		 */
 		public RmiRegistry build() throws IOException {
 			RmiRegistry rmiRegistry = new RmiRegistry(listenerPort, listenerDaemon, listenerEnable, serverSocketFactory,
-					socketFactory, filterFactory, authenticator, authIdentifier, authPassphrase);
+					socketFactory, filterFactory, authenticator);
 			return rmiRegistry;
 		}
-	}
-
-	/**
-	 * Package-level method to get authentication identifier.
-	 * 
-	 * @return authentication identifier
-	 */
-	String getAuthIdentifier() {
-		return authIdentifier;
-	}
-
-	/**
-	 * Package-level method to get authentication pass-phrase.
-	 * 
-	 * @return authentication pass-phrase
-	 */
-	String getAuthPassphrase() {
-		return authPassphrase;
 	}
 
 	/**
@@ -274,7 +314,7 @@ public class RmiRegistry {
 	 * listener. No other layers are inserted into the communication of
 	 * {@link RmiHandler} instances, just a plain, object based communication will
 	 * be established. See other constructors of this class (e.g.
-	 * {@link #RmiRegistry(int, boolean, boolean, ServerSocketFactory, SocketFactory, FilterFactory, Authenticator, String, String)})
+	 * {@link #RmiRegistry(int, boolean, boolean, ServerSocketFactory, SocketFactory, FilterFactory, Authenticator)})
 	 * to add some other communication layers, such as compression, authentication,
 	 * cryptography and so on (For example, you can use a subclass of
 	 * {@link SSLSocketFactory} to reach a good level of cryptography for RMI
@@ -287,7 +327,7 @@ public class RmiRegistry {
 	 * 
 	 */
 	public RmiRegistry() {
-		this(null, null, null, null, null, null);
+		this(null, null, null, null);
 	}
 
 	/**
@@ -305,27 +345,7 @@ public class RmiRegistry {
 	 * @see RmiRegistry#builder()
 	 */
 	public RmiRegistry(FilterFactory filterFactory) {
-		this(null, null, filterFactory, null, null, null);
-	}
-
-	/**
-	 * Creates a new {@link RmiRegistry} with the given FilterFactory instances,
-	 * without starting the connection listener.
-	 * 
-	 * @param filterFactory  the {@link FilterFactory} instance that gives the
-	 *                       streams in which the underlying communication streams
-	 *                       will be wrapped in
-	 * @param authIdentifier the identifier with which this machine presents itself
-	 *                       for authentication and authorization on remote machines
-	 *                       contacted through this registry
-	 * @param authPassphrase the pass-phrase used for authentication on remote
-	 *                       machines contacted through this registry
-	 * 
-	 * @see RmiRegistry.Builder
-	 * @see RmiRegistry#builder()
-	 */
-	public RmiRegistry(FilterFactory filterFactory, String authIdentifier, String authPassphrase) {
-		this(null, null, filterFactory, null, authIdentifier, authPassphrase);
+		this(null, null, filterFactory, null);
 	}
 
 	/**
@@ -340,18 +360,13 @@ public class RmiRegistry {
 	 * @param filterFactory       the {@link FilterFactory} instance that gives the
 	 *                            streams in which the underlying communication
 	 *                            streams will be wrapped in
-	 * @param authIdentifier      the identifier with which this machine presents
-	 *                            itself for authentication and authorization on
-	 *                            remote machines contacted through this registry
-	 * @param authPassphrase      the pass-phrase used for authentication on remote
-	 *                            machines contacted through this registry
 	 * 
 	 * @see RmiRegistry.Builder
 	 * @see RmiRegistry#builder()
 	 */
 	public RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			FilterFactory filterFactory, String authIdentifier, String authPassphrase) {
-		this(serverSocketFactory, socketFactory, filterFactory, null, authIdentifier, authPassphrase);
+			FilterFactory filterFactory) {
+		this(serverSocketFactory, socketFactory, filterFactory, null);
 	}
 
 	/**
@@ -371,17 +386,12 @@ public class RmiRegistry {
 	 *                            connection. For example, this instance can be an
 	 *                            adapter that access a database or another pre-made
 	 *                            authentication system.
-	 * @param authIdentifier      the identifier with which this machine presents
-	 *                            itself for authentication and authorization on
-	 *                            remote machines contacted through this registry
-	 * @param authPassphrase      the pass-phrase used for authentication on remote
-	 *                            machines contacted through this registry
 	 * 
 	 * @see RmiRegistry.Builder
 	 * @see RmiRegistry#builder()
 	 */
 	public RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			FilterFactory filterFactory, Authenticator authenticator, String authIdentifier, String authPassphrase) {
+			FilterFactory filterFactory, Authenticator authenticator) {
 		if (serverSocketFactory == null)
 			serverSocketFactory = ServerSocketFactory.getDefault();
 		if (socketFactory == null)
@@ -395,9 +405,6 @@ public class RmiRegistry {
 		this.ssFactory = serverSocketFactory;
 		this.sFactory = socketFactory;
 		this.filterFactory = filterFactory;
-
-		this.authIdentifier = authIdentifier;
-		this.authPassphrase = authPassphrase;
 		this.authenticator = authenticator;
 		attachFailureObserver(failureObserver);
 	}
@@ -425,11 +432,6 @@ public class RmiRegistry {
 	 *                            connection. For example, this instance can be an
 	 *                            adapter that access a database or another pre-made
 	 *                            authentication system.
-	 * @param authIdentifier      the identifier with which this machine presents
-	 *                            itself for authentication and authorization on
-	 *                            remote machines contacted through this registry
-	 * @param authPassphrase      the pass-phrase used for authentication on remote
-	 *                            machines contacted through this registry
 	 * @throws IOException if an I\O error occurs
 	 * 
 	 * @see RmiRegistry.Builder
@@ -437,8 +439,8 @@ public class RmiRegistry {
 	 */
 	public RmiRegistry(int listenerPort, boolean listenerDaemon, boolean listenerEnable,
 			ServerSocketFactory serverSocketFactory, SocketFactory socketFactory, FilterFactory filterFactory,
-			Authenticator authenticator, String authIdentifier, String authPassphrase) throws IOException {
-		this(serverSocketFactory, socketFactory, filterFactory, authenticator, authIdentifier, authPassphrase);
+			Authenticator authenticator) throws IOException {
+		this(serverSocketFactory, socketFactory, filterFactory, authenticator);
 		if (listenerEnable)
 			enableListener(listenerPort, listenerDaemon);
 	}
@@ -528,6 +530,22 @@ public class RmiRegistry {
 		synchronized (lock) {
 			return getRmiHandler(address, port, createNewHandler).getStub(objectId, stubInterfaces);
 		}
+	}
+
+	public Object getStub(String address, int port, String objectId)
+			throws UnknownHostException, IOException, InterruptedException {
+		return getStub(address, port, objectId, multiConnectionMode);
+	}
+
+	public Object getStub(String address, int port, String objectId, boolean createNewHandler)
+			throws UnknownHostException, IOException, InterruptedException {
+
+		RemoteInterfaceHandle hnd = new RemoteInterfaceHandle(objectId);
+		RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
+		rmiHandler.putHandle(hnd);
+		hnd.semaphore.acquire();
+
+		return rmiHandler.getStub(objectId, hnd.interfaces);
 	}
 
 	/**
@@ -854,6 +872,8 @@ public class RmiRegistry {
 	 *         otherwise
 	 */
 	public boolean isRemote(Class<?> remoteIf) {
+		if (remoteIf == Remote.class)
+			return false;
 		if (Remote.class.isAssignableFrom(remoteIf))
 			return true;
 
@@ -867,6 +887,39 @@ public class RmiRegistry {
 			}
 		}
 		return isMapped;
+	}
+
+	public List<Class<?>> getRemoteInterfaces(String objectId) {
+		System.out.println("getRemoteInterfaces: " + objectId);
+		Object object = getRemoteObject(objectId);
+		return getRemoteInterfaces(object);
+	}
+
+	public List<Class<?>> getRemoteInterfaces(Object object) {
+		if (object == null)
+			return new ArrayList<>();
+		return getRemoteInterfaces(object.getClass());
+	}
+
+	public List<Class<?>> getRemoteInterfaces(Class<?> cls) {
+		System.out.println("getRemoteInterfaces: " + cls);
+		List<Class<?>> remoteIfs = new ArrayList<>();
+		Class<?> current = cls;
+		while (current != null) {
+			Class<?>[] ifaces = current.getInterfaces();
+			for (Class<?> iface : ifaces) {
+				System.out.println("getRemoteInterfaces:  found interface = " + iface);
+				if (isRemote(iface))
+					remoteIfs.add(iface);
+				else {
+					List<Class<?>> remoteSupers = getRemoteInterfaces(iface);
+					remoteIfs.addAll(remoteSupers);
+				}
+			}
+			current = current.getSuperclass();
+		}
+		System.out.println("getRemoteInterfaces: " + remoteIfs);
+		return remoteIfs;
 	}
 
 	/**

@@ -18,6 +18,8 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
 import agilermi.Authenticator;
+import agilermi.DefaultSSLServerSocketFactory;
+import agilermi.DefaultSSLSocketFactory;
 import agilermi.FailureObserver;
 import agilermi.RmiHandler;
 import agilermi.RmiRegistry;
@@ -67,7 +69,10 @@ class ClientTest {
 
 		// object server creation
 		// serverRegistry = new RmiRegistry(3031, true);
-		serverRegistry = RmiRegistry.builder().enableListener(3031, true).setAuthenticator(authenticator).build();
+		serverRegistry = RmiRegistry.builder()
+				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory())
+				.enableListener(3031, true).setAuthenticator(authenticator).build();
+		serverRegistry.exportInterface(TestIF.class);
 
 		// remote objects creation
 		TestIF test = new TestImpl();
@@ -78,7 +83,9 @@ class ClientTest {
 
 	void clientSetUp() throws Exception {
 		// create the registry
-		clientRegistry = RmiRegistry.builder().setAuthentication("testId", "testPass").build();
+		clientRegistry = RmiRegistry.builder()
+				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory()).build();
+		clientRegistry.setAuthentication("localhost", 3031, "testId", "testPass");
 		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);
 
 		// attach failure observer to manage connection and I/O errors
@@ -98,7 +105,7 @@ class ClientTest {
 		 * referenced remotely by the server to the local client)
 		 */
 		clientRegistry.exportInterface(TestObserver.class);
-		stub = (TestIF) clientRegistry.getStub("localhost", 3031, "test", TestIF.class);
+		stub = (TestIF) clientRegistry.getStub("localhost", 3031, "test");
 	}
 
 	@BeforeEach

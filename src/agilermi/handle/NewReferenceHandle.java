@@ -15,19 +15,24 @@
  *  
  **/
 
-package agilermi;
+package agilermi.handle;
 
-import java.io.Serializable;
+import agilermi.RmiHandler;
 
 /**
- * Represents a generic message sent by a {@link RemoteInvocationHandler} to its
- * associated local {@link RmiHandler} and also it represents a message that can
- * be sent by a {@link RmiHandler} to another {@link RmiHandler} through the
- * network, so it is {@link Serializable}.
+ * This class represents a request to add a new remote reference to a skeleton.
+ * This is sent over a {@link RmiHandler} when a new stub is constructed or
+ * deserialized
  * 
  * @author Salvatore Giampa'
  *
  */
-interface Handle extends Serializable {
+public class NewReferenceHandle implements Handle {
+	private static final long serialVersionUID = 8561515474575531127L;
+	public String objectId;
+
+	public NewReferenceHandle(String objectId) {
+		this.objectId = objectId;
+	}
 
 }

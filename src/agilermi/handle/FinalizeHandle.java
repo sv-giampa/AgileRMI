@@ -15,30 +15,23 @@
  *  
  **/
 
-package agilermi;
+package agilermi.handle;
 
 /**
- * This class represents response messages to invocation requests. This class is
- * the counterpart of the {@link InvocationHandle} class
+ * This class represents finalization messages sent by
+ * {@link RemoteInvocationHandler} instances to their skeleton, to act the
+ * distributed garbage collection mechanism
  * 
  * @author Salvatore Giampa'
  *
  */
-class ReturnHandle implements Handle {
-	private static final long serialVersionUID = 6674503222830749941L;
-	public long invocationId;
-	public Class<?> returnClass;
-	public Object returnValue;
-	public Throwable thrownException;
+public class FinalizeHandle implements Handle {
+	private static final long serialVersionUID = 6485937225497004801L;
 
-	public ReturnHandle() {
-	}
+	public String objectId;
 
-	public ReturnHandle(long invocationId, Class<?> returnClass, Object returnValue, Throwable thrownException) {
-		this.invocationId = invocationId;
-		this.returnClass = returnClass;
-		this.returnValue = returnValue;
-		this.thrownException = thrownException;
+	public FinalizeHandle(String objectId) {
+		this.objectId = objectId;
 	}
 
 }

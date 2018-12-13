@@ -31,6 +31,9 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.net.UnknownHostException;
 
+import agilermi.handle.InvocationHandle;
+import agilermi.handle.ReturnHandle;
+
 /**
  * This class extends the standard {@link ObjectInputStream} to give an object
  * context to the deserializing {@link RemoteInvocationHandler} instances. This

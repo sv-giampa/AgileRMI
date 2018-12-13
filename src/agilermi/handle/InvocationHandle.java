@@ -15,7 +15,7 @@
  *  
  **/
 
-package agilermi;
+package agilermi.handle;
 
 import java.util.concurrent.Semaphore;
 
@@ -25,10 +25,10 @@ import java.util.concurrent.Semaphore;
  * @author Salvatore Giampa'
  *
  */
-class InvocationHandle implements Handle {
+public class InvocationHandle implements Handle {
 	private static final long serialVersionUID = 992296041709440752L;
 
-	private static long nextInvocationId = 0;
+	private static long nextId = 0;
 
 	// invocation identifier, re-sent back in the related invocation response,
 	// represented by a ReturnHandle instance
@@ -83,7 +83,7 @@ class InvocationHandle implements Handle {
 	 * @param parameters     actual parameters of the invocation
 	 */
 	public InvocationHandle(String objectId, String method, Class<?>[] parameterTypes, Object[] parameters) {
-		id = nextInvocationId++;
+		id = nextId++;
 		this.objectId = objectId;
 		this.method = method;
 		this.parameterTypes = parameterTypes;

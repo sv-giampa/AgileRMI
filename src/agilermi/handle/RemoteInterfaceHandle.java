@@ -15,22 +15,37 @@
  *  
  **/
 
-package agilermi;
+package agilermi.handle;
+
+import java.util.concurrent.Semaphore;
 
 /**
- * This class represents finalization messages sent by
- * {@link RemoteInvocationHandler} instances to their skeleton, to act the
- * distributed garbage collection mechanism
+ * Used to request the remote interfaces exposed by a remote object.
  * 
  * @author Salvatore Giampa'
  *
  */
-class FinalizeHandle implements Handle {
-	private static final long serialVersionUID = 6485937225497004801L;
+public class RemoteInterfaceHandle implements Handle {
 
-	public String objectId;
+	private static final long serialVersionUID = -4774302373023169775L;
 
-	public FinalizeHandle(String objectId) {
+	private static long nextId = 0;
+
+	public final long handleId;
+
+	public final String objectId;
+
+	public Class<?>[] interfaces;
+
+	public transient final Semaphore semaphore = new Semaphore(0);
+
+	public RemoteInterfaceHandle(String objectId) {
+		this.handleId = nextId++;
+		this.objectId = objectId;
+	}
+
+	public RemoteInterfaceHandle(long handleId, String objectId) {
+		this.handleId = handleId;
 		this.objectId = objectId;
 	}
 

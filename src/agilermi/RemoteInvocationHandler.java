@@ -29,6 +29,9 @@ import java.net.Socket;
 
 import agilermi.exception.LocalAuthenticationException;
 import agilermi.exception.RemoteException;
+import agilermi.handle.FinalizeHandle;
+import agilermi.handle.InvocationHandle;
+import agilermi.handle.NewReferenceHandle;
 
 /**
  * Defines the invocation handler for the object stubs

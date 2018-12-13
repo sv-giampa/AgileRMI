@@ -31,6 +31,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -43,6 +44,12 @@ import javax.net.SocketFactory;
 import agilermi.exception.LocalAuthenticationException;
 import agilermi.exception.RemoteAuthenticationException;
 import agilermi.exception.RemoteException;
+import agilermi.handle.FinalizeHandle;
+import agilermi.handle.Handle;
+import agilermi.handle.InvocationHandle;
+import agilermi.handle.NewReferenceHandle;
+import agilermi.handle.RemoteInterfaceHandle;
+import agilermi.handle.ReturnHandle;
 
 /**
  * 
@@ -89,6 +96,8 @@ public class RmiHandler {
 	// Map for invocations that are waiting a response
 	private Map<Long, InvocationHandle> invocations = Collections.synchronizedMap(new HashMap<>());
 
+	private Map<Long, RemoteInterfaceHandle> interfaceRequests = Collections.synchronizedMap(new HashMap<>());
+
 	// The queue for buffered invocations that are ready to be sent over the socket
 	private BlockingQueue<Handle> handleQueue = new ArrayBlockingQueue<>(200);
 
@@ -97,6 +106,11 @@ public class RmiHandler {
 
 	// remote references requested by the other machine
 	private Set<String> references = new TreeSet<>();
+
+	private String remoteAuthIdentifier;
+
+	private String authIdentifier;
+	private String authPassphrase;
 
 	// on the other side of the connection there is a RmiHandler that lies on this
 	// same machine and uses the same registry of this one
@@ -241,13 +255,13 @@ public class RmiHandler {
 
 		// if on the other side there is not the same registry of this handler, do
 		// normal authentication
-		out.writeUnshared(rmiRegistry.getAuthIdentifier());
-		out.writeUnshared(rmiRegistry.getAuthPassphrase());
+		out.writeUnshared(authIdentifier);
+		out.writeUnshared(authPassphrase);
 		out.flush();
 
-		String authId, authPass;
+		String authPass;
 		try {
-			authId = (String) in.readUnshared();
+			remoteAuthIdentifier = (String) in.readUnshared();
 			authPass = (String) in.readUnshared();
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -260,7 +274,7 @@ public class RmiHandler {
 		}
 
 		if (rmiRegistry.getAuthenticator() == null
-				|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, authId, authPass)) {
+				|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
 			try {
 				out.writeBoolean(true);
 				out.flush();
@@ -316,6 +330,13 @@ public class RmiHandler {
 		inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
 		this.socket = socket;
 		this.rmiRegistry = rmiRegistry;
+
+		String[] auth = rmiRegistry.getAuthentication(socket.getInetAddress(), socket.getPort());
+
+		if (auth != null) {
+			authIdentifier = auth[0];
+			authPassphrase = auth[1];
+		}
 
 		OutputStream output = socket.getOutputStream();
 		InputStream input = socket.getInputStream();
@@ -435,6 +456,12 @@ public class RmiHandler {
 							e.printStackTrace();
 						}
 
+					} else if (handle instanceof RemoteInterfaceHandle) {
+						RemoteInterfaceHandle rih = (RemoteInterfaceHandle) handle;
+						if (rih.interfaces == null) {
+							interfaceRequests.put(rih.handleId, rih);
+						}
+						out.writeUnshared(rih);
 					} else {
 						out.writeUnshared(handle);
 					}
@@ -500,8 +527,7 @@ public class RmiHandler {
 
 						// get authorization
 						boolean authorized = sameRegistryAuthentication || rmiRegistry.getAuthenticator() == null
-								|| rmiRegistry.getAuthenticator().authorize(rmiRegistry.getAuthIdentifier(), object,
-										method);
+								|| rmiRegistry.getAuthenticator().authorize(remoteAuthIdentifier, object, method);
 
 						// if authorized, starts the delegation thread
 						if (authorized) {
@@ -580,6 +606,18 @@ public class RmiHandler {
 							Skeleton sk = rmiRegistry.getSkeleton(newReferenceHandle.objectId);
 							sk.addRef(RmiHandler.this);
 							references.add(sk.getId());
+						}
+					} else if (handle instanceof RemoteInterfaceHandle) {
+						RemoteInterfaceHandle rih = (RemoteInterfaceHandle) handle;
+						if (rih.interfaces == null) {
+							List<Class<?>> remotes = rmiRegistry.getRemoteInterfaces(rih.objectId);
+							rih.interfaces = new Class<?>[remotes.size()];
+							rih.interfaces = remotes.toArray(rih.interfaces);
+							putHandle(rih);
+						} else {
+							RemoteInterfaceHandle req = interfaceRequests.get(rih.handleId);
+							req.interfaces = rih.interfaces;
+							req.semaphore.release();
 						}
 					} else {
 						throw new RuntimeException("AgileRMI INTERNAL ERROR");
