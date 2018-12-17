@@ -457,14 +457,12 @@ public class RmiRegistry {
 	public Object getStub(String address, int port, String objectId, boolean createNewHandler)
 			throws UnknownHostException, IOException, InterruptedException {
 
-		synchronized (lock) {
-			RemoteInterfaceHandle hnd = new RemoteInterfaceHandle(objectId);
-			RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
-			rmiHandler.putHandle(hnd);
-			hnd.semaphore.acquire();
+		RemoteInterfaceHandle hnd = new RemoteInterfaceHandle(objectId);
+		RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
+		rmiHandler.putHandle(hnd);
+		hnd.semaphore.acquire();
 
-			return rmiHandler.getStub(objectId, hnd.interfaces);
-		}
+		return rmiHandler.getStub(objectId, hnd.interfaces);
 	}
 
 	/**
@@ -495,7 +493,7 @@ public class RmiRegistry {
 	 * @throws IOException          if I/O errors occur
 	 */
 	public RmiHandler getRmiHandler(String host, int port, boolean createNew) throws IOException {
-		synchronized (lock) {
+		synchronized (handlers) {
 			InetSocketAddress inetAddress = new InetSocketAddress(host, port);
 			if (!handlers.containsKey(inetAddress))
 				handlers.put(inetAddress, new ArrayList<>(1));
@@ -521,7 +519,7 @@ public class RmiRegistry {
 	 * @throws IOException if I/O errors occur
 	 */
 	public void enableListener(int port, boolean daemon) throws IOException {
-		synchronized (lock) {
+		synchronized (ssFactory) {
 			if (listener != null)
 				disableListener();
 			serverSocket = ssFactory.createServerSocket(port);
@@ -537,7 +535,7 @@ public class RmiRegistry {
 	 * accept new incoming connections, but does not close the current open ones.
 	 */
 	public void disableListener() {
-		synchronized (lock) {
+		synchronized (ssFactory) {
 			if (listener == null)
 				return;
 
@@ -600,7 +598,7 @@ public class RmiRegistry {
 	 *                                  that is /\#[0-9]+/
 	 */
 	public void publish(String objectId, Object object) {
-		synchronized (lock) {
+		synchronized (skeletonById) {
 			if (objectId.startsWith(Skeleton.IDENTIFIER_PREFIX))
 				throw new IllegalArgumentException("The used identifier prefix '" + Skeleton.IDENTIFIER_PREFIX
 						+ "' is reserved to atomatic referencing. Please use another identifier pattern.");
@@ -635,7 +633,7 @@ public class RmiRegistry {
 	 * @return the generated identifier
 	 */
 	public String publish(Object object) {
-		synchronized (lock) {
+		synchronized (skeletonById) {
 			if (skeletonByObject.containsKey(object)) {
 				Skeleton sk = skeletonByObject.get(object);
 				if (sk.getObject() != object)
@@ -657,7 +655,7 @@ public class RmiRegistry {
 	 * @param object the object to unpublish
 	 */
 	public void unpublish(Object object) {
-		synchronized (lock) {
+		synchronized (skeletonById) {
 			Skeleton skeleton = skeletonByObject.remove(object);
 			if (skeleton != null) {
 				skeletonById.remove(skeleton.getId());
@@ -674,7 +672,7 @@ public class RmiRegistry {
 	 */
 
 	public void unpublish(String objectId) {
-		synchronized (lock) {
+		synchronized (skeletonById) {
 			Skeleton skeleton = skeletonById.remove(objectId);
 			if (skeleton != null) {
 				skeletonByObject.remove(skeleton.getObject());
@@ -690,7 +688,7 @@ public class RmiRegistry {
 	 * @param o the failure observer
 	 */
 	public void attachFailureObserver(FailureObserver o) {
-		synchronized (lock) {
+		synchronized (failureObservers) {
 			failureObservers.add(o);
 		}
 	}
@@ -701,7 +699,7 @@ public class RmiRegistry {
 	 * @param o the failure observer
 	 */
 	public void detachFailureObserver(FailureObserver o) {
-		synchronized (lock) {
+		synchronized (failureObservers) {
 			failureObservers.remove(o);
 		}
 	}
@@ -713,7 +711,7 @@ public class RmiRegistry {
 	 * @return the remotized object
 	 */
 	public Object getRemoteObject(String objectId) {
-		synchronized (lock) {
+		synchronized (skeletonById) {
 			Skeleton skeleton = skeletonById.get(objectId);
 			if (skeleton != null)
 				return skeleton.getObject();
@@ -747,7 +745,7 @@ public class RmiRegistry {
 	 * @param remoteIf the interface to mark
 	 */
 	public void exportInterface(Class<?> remoteIf) {
-		synchronized (lock) {
+		synchronized (remotes) {
 			if (remoteIf == Remote.class)
 				throw new IllegalArgumentException("agilermi.Remote interface cannot be exported!");
 			if (!remoteIf.isInterface())
@@ -764,7 +762,7 @@ public class RmiRegistry {
 	 * @param remoteIf the interface to unmark
 	 */
 	public void unexportInterface(Class<?> remoteIf) {
-		synchronized (lock) {
+		synchronized (remotes) {
 			if (Remote.class.isAssignableFrom(remoteIf))
 				throw new IllegalArgumentException(
 						"An interface that is statically defined as remote cannot be unexported.");
@@ -790,7 +788,7 @@ public class RmiRegistry {
 			return true;
 
 		boolean isMapped;
-		synchronized (lock) {
+		synchronized (remotes) {
 			isMapped = remotes.contains(remoteIf);
 		}
 
@@ -861,7 +859,7 @@ public class RmiRegistry {
 	 * @param exception  the exception thrown by the object peer
 	 */
 	void sendRmiHandlerFailure(RmiHandler rmiHandler, Exception exception) {
-		synchronized (lock) {
+		synchronized (failureObservers) {
 			failureObservers.forEach(o -> {
 				try {
 					o.failure(rmiHandler, exception);
@@ -879,7 +877,7 @@ public class RmiRegistry {
 	 * @return the skeleton of the remote object
 	 */
 	Skeleton getSkeleton(String id) {
-		synchronized (lock) {
+		synchronized (skeletonById) {
 			return skeletonById.get(id);
 		}
 	}
@@ -892,7 +890,7 @@ public class RmiRegistry {
 	 * @return the skeleton of the remote object
 	 */
 	Skeleton getSkeleton(Object object) {
-		synchronized (lock) {
+		synchronized (skeletonById) {
 			return skeletonByObject.get(object);
 		}
 	}
