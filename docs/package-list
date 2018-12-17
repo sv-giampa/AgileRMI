@@ -1,1 +1,5 @@
-agilermi
+agilermi.authentication
+agilermi.communication
+agilermi.configuration
+agilermi.core
+agilermi.exception

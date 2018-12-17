@@ -2,7 +2,7 @@ package agilermi.example.server;
 
 import java.io.IOException;
 
-import agilermi.RmiRegistry;
+import agilermi.core.RmiRegistry;
 import agilermi.example.service.Service;
 
 public class AgileRmiServer {
@@ -11,13 +11,17 @@ public class AgileRmiServer {
 		System.out.println("Server started.");
 
 		// rmi registry creation
-		RmiRegistry rmiRegistry = RmiRegistry.builder().enableListener(3031, true).build();
+		RmiRegistry rmiRegistry = RmiRegistry.builder().build();
 
 		// remote objects creation
 		Service service = new ServiceImpl();
 
 		// remote objects publishing
 		rmiRegistry.publish("service", service);
+
+		rmiRegistry.enableRemoteException(false);
+
+		rmiRegistry.enableListener(3031, true);
 
 		while (true) {
 			Thread.sleep(5000);

@@ -1,6 +1,6 @@
 package agilermi.example.service;
 
-import agilermi.Remote;
+import agilermi.configuration.Remote;
 
 public interface Service extends Remote{
 
