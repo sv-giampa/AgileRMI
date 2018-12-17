@@ -17,7 +17,7 @@
 
 package agilermi.exception;
 
-import agilermi.RmiHandler;
+import agilermi.core.RmiHandler;
 
 /**
  * This exception is thrown when a {@link RmiHandler} instance has been disposed

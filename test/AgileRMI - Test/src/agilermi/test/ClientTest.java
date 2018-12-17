@@ -5,11 +5,9 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,12 +15,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
-import agilermi.Authenticator;
-import agilermi.DefaultSSLServerSocketFactory;
-import agilermi.DefaultSSLSocketFactory;
-import agilermi.FailureObserver;
-import agilermi.RmiHandler;
-import agilermi.RmiRegistry;
+import agilermi.authentication.Authenticator;
+import agilermi.communication.DefaultSSLServerSocketFactory;
+import agilermi.communication.DefaultSSLSocketFactory;
+import agilermi.configuration.FailureObserver;
+import agilermi.core.RmiHandler;
+import agilermi.core.RmiRegistry;
 import agilermi.test.service.ObserverContainer;
 import agilermi.test.service.TestIF;
 import agilermi.test.service.TestImpl;
@@ -71,7 +69,7 @@ class ClientTest {
 		// serverRegistry = new RmiRegistry(3031, true);
 		serverRegistry = RmiRegistry.builder()
 				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory())
-				.enableListener(3031, true).setAuthenticator(authenticator).build();
+				.setAuthenticator(authenticator).build();
 		serverRegistry.exportInterface(TestIF.class);
 
 		// remote objects creation
@@ -79,6 +77,8 @@ class ClientTest {
 
 		// remote objects publishing
 		serverRegistry.publish("test", test);
+
+		serverRegistry.enableListener(3031, true);
 	}
 
 	void clientSetUp() throws Exception {
@@ -106,11 +106,6 @@ class ClientTest {
 		 */
 		clientRegistry.exportInterface(TestObserver.class);
 		stub = (TestIF) clientRegistry.getStub("localhost", 3031, "test");
-	}
-
-	@BeforeEach
-	void getStub() throws UnknownHostException, IOException {
-		// - create the stubs for the wanted remote objects
 	}
 
 	@Test

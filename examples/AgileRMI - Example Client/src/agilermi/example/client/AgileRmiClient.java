@@ -3,9 +3,9 @@ package agilermi.example.client;
 import java.io.IOException;
 import java.net.UnknownHostException;
 
-import agilermi.FailureObserver;
-import agilermi.RmiHandler;
-import agilermi.RmiRegistry;
+import agilermi.configuration.FailureObserver;
+import agilermi.core.RmiHandler;
+import agilermi.core.RmiRegistry;
 import agilermi.example.service.Service;
 import agilermi.example.service.ServiceObserver;
 
@@ -17,9 +17,9 @@ public class AgileRmiClient {
 		application();
 	}
 
-	private static void rmiSetup() throws UnknownHostException, IOException {
+	private static void rmiSetup() throws UnknownHostException, IOException, InterruptedException {
 		// connect the ObjectPeer, and get the ObjectRegistry
-		RmiRegistry registry = new RmiRegistry();
+		RmiRegistry registry = RmiRegistry.builder().build();
 
 		// attach failure observer to manage connection and I/O errors
 		registry.attachFailureObserver(new FailureObserver() {
@@ -37,7 +37,7 @@ public class AgileRmiClient {
 		registry.exportInterface(ServiceObserver.class);
 
 		// create the stub for the wanted remote object
-		service = (Service) registry.getStub("localhost", 3031, "service", Service.class);
+		service = (Service) registry.getStub("localhost", 3031, "service");
 	}
 
 	/**

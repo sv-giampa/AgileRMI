@@ -4,7 +4,6 @@ As is usually done in Java RMI, the application is divided in three projects:
 - The Server project: implements the Commons' interfaces and provide an implementation of the business services;
 - The Client project: creates the stubs of the remote objects and uses them.
 
-## Projects notes
 To see and explore this example application, imports all these three Eclipse projects provided in this folder.
 They are linked through build paths.
 Then start the server first, and the client later.
