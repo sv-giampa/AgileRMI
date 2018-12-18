@@ -18,8 +18,10 @@ The fundamental specifics and goals of the library:
 AgileRMI want not offer code mobility, because it is intended to be suitable also for systems that requires very strict security constraints, such as Android devices, but it is surely a very good base for weak and strog code mobility systems, for distributed file systems, and so on.
 
 ## References
-See documentation at: https://sv-giampa.github.io/AgileRMI/
+See the documentation at: https://sv-giampa.github.io/AgileRMI/
 
-See test project at: https://github.com/sv-giampa/AgileRMI/tree/master/test/AgileRMI%20-%20Test
+See the wiki at: https://github.com/sv-giampa/AgileRMI/wiki
 
-See example projects at: https://github.com/sv-giampa/AgileRMI/tree/master/examples
+See the JUnit test project at: https://github.com/sv-giampa/AgileRMI/tree/master/test/AgileRMI%20-%20Test
+
+See the example projects at: https://github.com/sv-giampa/AgileRMI/tree/master/examples
