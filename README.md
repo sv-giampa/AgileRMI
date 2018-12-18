@@ -3,7 +3,7 @@ This is a Java library useful to create network applications, without socket pro
 simply defining the business interfaces of the objects that you want to export on the network.
 
 The fundamental specifics and goals of the library:
-- It is full usable in Android and similar embedded applications;
+- The usefulness in Android and similar embedded applications;
 - The possibility to export any object remotely, without the requirement to implement a explicitly marked remote interface, as we must do in Java RMI (Applicable to systems that were not thought to be remote);
 - Supports the Remote marker interface, too, similarly to the Remote interface in Java RMI;
 - By default, it tends to execute all the communication tasks for two machines on a single TCP connection (when possible, for example, when the client does not explicitly create multiple RMI connections). This characteristic is very useful because it limits the number of used tcp ports, maintaining good performaces during the communication between two machines, and it can be very desired on low power devices, on smartphones and on very busy server devices.
