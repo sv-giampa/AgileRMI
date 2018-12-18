@@ -10,10 +10,10 @@ The fundamental specifics and goals of the library:
 - RMI configuration is separated from the client application logic that uses the stubs of remote objects;
 - The backing RMI system is very easy to configure directly through code;
 - It gives possibility to use custom socket factories to configure the RMI system for the use of other communication layers, such as authentication, compression, cryptography and so on, by implementing the SocketFactory and  the ServerSocketFactory abstract classes of the standard JDK;
-- Possibility to use custom input and output stream implementations, through a FilterFactory implementation, without providing new socket factory implementations, when possible;
+- Possibility to use custom underlying protocols, putting new layers between the RMI and the TCP protocols;
 - Supports the full remote reference exchange, also when remote references are sent into serializable objects, as Java RMI can do. The remote objects on the local machine are automatically referenced as remote objects when they are sent on the RMI object output streams;
 - It provides a full distributed garbage collection system to avoid memory leaks on the machines that expose remote objects.
-- Supports a built-in authentication for new RMI incoming connections and access authorization for invocations. The authentication and authorization methods are fully customizable by the developer through the Authenticator interface, for example to authenticate user respect to a database. Moreover, AgileRMI provides a standard non-scalable implementation for authentication and authorization, exported by the StandardAuthenticator class.
+- Supports a built-in authentication for new RMI incoming connections and access authorization for invocations. The authentication and authorization methods are fully customizable by the developer through the Authenticator interface, for example to authenticate the users respect to a database. Moreover, AgileRMI provides a standard non-scalable implementation for authentication and authorization, exported by the StandardAuthenticator class.
 
 AgileRMI want not offer code mobility, because it is intended to be suitable also for systems that requires very strict security constraints, such as Android devices, but it is surely a very good base for weak and strog code mobility systems, for distributed file systems, and so on.
 
