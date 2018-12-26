@@ -38,6 +38,7 @@ import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 
 import agilermi.authentication.Authenticator;
+import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.FailureObserver;
 import agilermi.configuration.Remote;
@@ -298,11 +299,12 @@ public class RmiRegistry {
 		 * build.
 		 * 
 		 * @param protocolEndpointFactory the {@link ProtocolEndpointFactory} instance
-		 *                                that gives the streams in which the underlying
-		 *                                communication streams will be wrapped in
+		 *                                that gives the {@link ProtocolEndpoint}
+		 *                                instance in which the underlying communication
+		 *                                streams will be wrapped in
 		 * @return this builder
 		 */
-		public Builder setFilterFactory(ProtocolEndpointFactory protocolEndpointFactory) {
+		public Builder setProtocolEndpointFactory(ProtocolEndpointFactory protocolEndpointFactory) {
 			this.protocolEndpointFactory = protocolEndpointFactory;
 			return this;
 		}
@@ -431,21 +433,21 @@ public class RmiRegistry {
 	 * {@link RmiHandler} can be obtained by calling the
 	 * {@link #getRmiHandler(String, int)} method.
 	 * 
-	 * @param address          the host address
-	 * @param port             the host port
-	 * @param objectId         the remote object identifier
-	 * @param createNewHandler always create a new handler without getting an
-	 *                         already existing one. This parameter overrides the
-	 *                         {@link #multiConnectionMode} attribute
-	 * @param stubInterfaces   the interfaces implemented by the stub
+	 * @param address        the host address
+	 * @param port           the host port
+	 * @param objectId       the remote object identifier
+	 * @param newConnection  always create a new handler without getting an already
+	 *                       existing one. This parameter overrides the
+	 *                       {@link #multiConnectionMode} attribute
+	 * @param stubInterfaces the interfaces implemented by the stub
 	 * @return the stub object
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
 	 */
-	public Object getStub(String address, int port, String objectId, boolean createNewHandler,
-			Class<?>... stubInterfaces) throws UnknownHostException, IOException {
+	public Object getStub(String address, int port, String objectId, boolean newConnection, Class<?>... stubInterfaces)
+			throws UnknownHostException, IOException {
 		synchronized (lock) {
-			return getRmiHandler(address, port, createNewHandler).getStub(objectId, stubInterfaces);
+			return getRmiHandler(address, port, newConnection).getStub(objectId, stubInterfaces);
 		}
 	}
 
@@ -484,22 +486,22 @@ public class RmiRegistry {
 	 * Gets an {@link RmiHandler} instance for the specified host. If it has not
 	 * been created, creates it.
 	 * 
-	 * @param host      the host address
-	 * @param port      the host port
-	 * @param createNew always create a new handler without getting an already
-	 *                  existing one
+	 * @param host          the host address
+	 * @param port          the host port
+	 * @param newConnection always create a new handler without getting an already
+	 *                      existing one
 	 * @return the object peer related to the specified host
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
 	 */
-	public RmiHandler getRmiHandler(String host, int port, boolean createNew) throws IOException {
+	public RmiHandler getRmiHandler(String host, int port, boolean newConnection) throws IOException {
 		synchronized (handlers) {
 			InetSocketAddress inetAddress = new InetSocketAddress(host, port);
 			if (!handlers.containsKey(inetAddress))
 				handlers.put(inetAddress, new ArrayList<>(1));
 			List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
 			RmiHandler rmiHandler = null;
-			if (rmiHandlers.size() == 0 || createNew)
+			if (rmiHandlers.size() == 0 || newConnection)
 				rmiHandlers.add(
 						rmiHandler = new RmiHandler(sFactory.createSocket(host, port), this, protocolEndpointFactory));
 			else

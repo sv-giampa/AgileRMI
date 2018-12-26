@@ -18,6 +18,7 @@ import org.junit.jupiter.api.TestInstance.Lifecycle;
 import agilermi.authentication.Authenticator;
 import agilermi.communication.DefaultSSLServerSocketFactory;
 import agilermi.communication.DefaultSSLSocketFactory;
+import agilermi.communication.gzip.GzipEndpointFactory;
 import agilermi.configuration.FailureObserver;
 import agilermi.core.RmiHandler;
 import agilermi.core.RmiRegistry;
@@ -69,7 +70,7 @@ class ClientTest {
 		// serverRegistry = new RmiRegistry(3031, true);
 		serverRegistry = RmiRegistry.builder()
 				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory())
-				.setAuthenticator(authenticator).build();
+				.setProtocolEndpointFactory(new GzipEndpointFactory()).setAuthenticator(authenticator).build();
 		serverRegistry.exportInterface(TestIF.class);
 
 		// remote objects creation
@@ -84,7 +85,8 @@ class ClientTest {
 	void clientSetUp() throws Exception {
 		// create the registry
 		clientRegistry = RmiRegistry.builder()
-				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory()).build();
+				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory())
+				.setProtocolEndpointFactory(new GzipEndpointFactory()).build();
 		clientRegistry.setAuthentication("localhost", 3031, "testId", "testPass");
 		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);
 

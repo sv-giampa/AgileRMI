@@ -48,6 +48,10 @@ import agilermi.exception.RemoteAuthenticationException;
 import agilermi.exception.RemoteException;
 
 /**
+ * This class defines a RMI connection handler. The instances of this class
+ * manages all the RMI communication protocol between the local machine and a
+ * remote machine. This class can be instantiated through the RmiRegistry only.
+ * See the {@link RmiRegistry#getRmiHandler(String, int, boolean)} method
  * 
  * @author Salvatore Giampa'
  *
@@ -88,7 +92,7 @@ public class RmiHandler {
 	private boolean sameRegistryAuthentication = false;
 
 	/**
-	 * Gets the remote connection details of this peer
+	 * Gets the address of the remote process (IP address + TCP port)
 	 * 
 	 * @return the {@link InetSocketAddress} containing remote host address and port
 	 */

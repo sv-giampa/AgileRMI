@@ -22,6 +22,13 @@ import java.net.InetSocketAddress;
 
 import agilermi.core.RmiRegistry;
 
+/**
+ * Provide an interface that allows to define implementations or adapters for
+ * authentication and authorization systems for objects access control
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 public interface Authenticator {
 
 	/**
