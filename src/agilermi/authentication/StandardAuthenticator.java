@@ -26,7 +26,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
@@ -83,7 +82,7 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	// default authorization access
 	private boolean defaultAuthorization = true;
 
-	private Map<String, byte[]> authenticationMap = new TreeMap<>();
+	private Map<String, byte[]> authenticationMap = new HashMap<>();
 
 	private Map<String, Set<ObjectMethodAccess>> objectMethodEntriesByAuthId = new HashMap<>();
 	private Map<String, Set<MethodAccess>> methodEntriesByAuthId = new HashMap<>();

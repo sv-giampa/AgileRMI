@@ -27,6 +27,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -81,9 +82,10 @@ public class RmiHandler {
 	// remote references requested by the other machine
 	private Set<String> references = new TreeSet<>();
 
+	// the authentication identifier received by the remote machine
 	private String remoteAuthIdentifier;
 
-	// authentication to use for this connection
+	// authentication to send to the remote machine
 	private String authIdentifier;
 	private String authPassphrase;
 
@@ -105,8 +107,12 @@ public class RmiHandler {
 	 * A call to this method cause a callback on the failure observers attached to
 	 * the {@link RmiRegistry} associated to this instance sending them an instance
 	 * of {@link RemoteException}
+	 * 
+	 * @param signalFailure set to true if you want this {@link RmiHandler) to send
+	 *                      a signal to the failure observers attached to the
+	 *                      {@link RmiRegistry} that created this instance
 	 */
-	public synchronized void dispose() {
+	public synchronized void dispose(boolean signalFailure) {
 		if (disposed)
 			return;
 
@@ -140,8 +146,16 @@ public class RmiHandler {
 			}
 		}
 
-		RemoteException dispositionException = new RemoteException();
-		rmiRegistry.sendRmiHandlerFailure(this, dispositionException);
+		if (signalFailure) {
+			RemoteException dispositionException = new RemoteException();
+			rmiRegistry.sendRmiHandlerFailure(this, dispositionException);
+		}
+
+		try {
+			rmiRegistry.failureObserver.failure(this, null);
+		} catch (Throwable e) {
+			e.printStackTrace();
+		}
 
 		socket = null;
 		out = null;
@@ -337,10 +351,31 @@ public class RmiHandler {
 	}
 
 	/**
+	 * Gets a stub for the specified object identifier representing a remote object
+	 * on the remote machine. This method performs a request to the remote machine
+	 * to get the remote interfaces of the remote object, then creates its stub. All
+	 * the remote interfaces of the remote object must be visible by the default
+	 * class loader and they must be known by the local runtime.
+	 * 
+	 * @param objectId the object identifier
+	 * @param          <T> the stub interface type
+	 * @return A dynamic proxy object that represents the remote instance. It is an
+	 *         instance for the specified stub interface
+	 */
+	public Object getStub(String objectId) throws UnknownHostException, IOException, InterruptedException {
+
+		RemoteInterfaceHandle hnd = new RemoteInterfaceHandle(objectId);
+		putHandle(hnd);
+		hnd.semaphore.acquire();
+
+		return getStub(objectId, hnd.interfaces);
+	}
+
+	/**
 	 * Gets a stub for the specified object identifier respect to the specified
-	 * interface, representing a remote object on the object server. This method
+	 * interfaces, representing a remote object on the remote machine. This method
 	 * performs no network operation, just creates the stub. All the interfaces
-	 * passed must be visible in the class loader of the first interface.
+	 * passed must be visible by the class loader of the first interface.
 	 * 
 	 * @param objectId       the object identifier
 	 * @param stubInterfaces the interface whose methods must be stubbed, that is
@@ -350,7 +385,7 @@ public class RmiHandler {
 	 * @return A dynamic proxy object that represents the remote instance. It is an
 	 *         instance for the specified stub interface
 	 */
-	Object getStub(String objectId, Class<?>... stubInterfaces) {
+	public Object getStub(String objectId, Class<?>... stubInterfaces) {
 		if (disposed)
 			throw new IllegalStateException("This RmiHandler has been disposed");
 		if (stubInterfaces.length == 0)
@@ -461,7 +496,7 @@ public class RmiHandler {
 				if (disposed)
 					return;
 
-				dispose();
+				dispose(true);
 
 				try {
 					socket.close();
@@ -609,7 +644,7 @@ public class RmiHandler {
 				if (disposed)
 					return;
 
-				dispose();
+				dispose(true);
 
 				try {
 					socket.close();

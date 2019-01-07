@@ -134,7 +134,7 @@ public class RmiRegistry {
 	 * Defines the {@link FailureObserver} used to manage the peer which closed the
 	 * connection
 	 */
-	private FailureObserver failureObserver = new FailureObserver() {
+	FailureObserver failureObserver = new FailureObserver() {
 		@Override
 		public void failure(RmiHandler rmiHandler, Exception exception) {
 			List<RmiHandler> list = handlers.get(rmiHandler.getInetSocketAddress());
@@ -359,13 +359,7 @@ public class RmiRegistry {
 		this.sFactory = socketFactory;
 		this.protocolEndpointFactory = protocolEndpointFactory;
 		this.authenticator = authenticator;
-		attachFailureObserver(failureObserver);
 	}
-
-	/*
-	 * public void setAuthentication(String authId, String authPassphrase) {
-	 * this.auth }
-	 */
 
 	/**
 	 * Finalizes this registry instance and all its current open connections. This
@@ -374,12 +368,25 @@ public class RmiRegistry {
 	 */
 	@Override
 	public void finalize() {
+		finalize(true);
+	}
+
+	/**
+	 * Finalizes this registry instance and all its current open connections. This
+	 * method is also called by the Garbage Collector when the registry is no longer
+	 * referenced
+	 * 
+	 * @param signalHandlersFailures set to true if you want all the
+	 *                               {@link RmiHandler} instances created by this
+	 *                               registry to send a signal to the failure
+	 *                               observers
+	 */
+	public void finalize(boolean signalHandlersFailures) {
 		synchronized (lock) {
-			detachFailureObserver(failureObserver);
 			disableListener();
 			for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext(); it.remove())
 				for (RmiHandler rmiHandler : handlers.get(it.next()))
-					rmiHandler.dispose();
+					rmiHandler.dispose(signalHandlersFailures);
 		}
 	}
 
@@ -438,7 +445,7 @@ public class RmiRegistry {
 	 * @param objectId       the remote object identifier
 	 * @param newConnection  always create a new handler without getting an already
 	 *                       existing one. This parameter overrides the
-	 *                       {@link #multiConnectionMode} attribute
+	 *                       {@link #isMultiConnectionMode} attribute
 	 * @param stubInterfaces the interfaces implemented by the stub
 	 * @return the stub object
 	 * @throws UnknownHostException if the host address cannot be resolved
@@ -451,11 +458,40 @@ public class RmiRegistry {
 		}
 	}
 
+	/**
+	 * Gets a stub for the specified object identifier representing a remote object
+	 * on a remote machine. This method performs a request to the remote machine to
+	 * get the remote interfaces of the remote object, then creates its stub. All
+	 * the remote interfaces of the remote object must be visible by the default
+	 * class loader and they must be known by the local runtime.
+	 * 
+	 * @param address  the host address
+	 * @param port     the host port
+	 * @param objectId the object identifier
+	 * @return A dynamic proxy object that represents the remote instance. It is an
+	 *         instance for the specified stub interface
+	 */
 	public Object getStub(String address, int port, String objectId)
 			throws UnknownHostException, IOException, InterruptedException {
 		return getStub(address, port, objectId, multiConnectionMode);
 	}
 
+	/**
+	 * Gets a stub for the specified object identifier representing a remote object
+	 * on a remote machine. This method performs a request to the remote machine to
+	 * get the remote interfaces of the remote object, then creates its stub. All
+	 * the remote interfaces of the remote object must be visible by the default
+	 * class loader and they must be known by the local runtime.
+	 * 
+	 * @param address       the host address
+	 * @param port          the host port
+	 * @param objectId      the object identifier
+	 * @param newConnection always create a new handler without getting an already
+	 *                      existing one. This parameter overrides the
+	 *                      {@link #isMultiConnectionMode} attribute
+	 * @return A dynamic proxy object that represents the remote instance. It is an
+	 *         instance for the specified stub interface
+	 */
 	public Object getStub(String address, int port, String objectId, boolean createNewHandler)
 			throws UnknownHostException, IOException, InterruptedException {
 

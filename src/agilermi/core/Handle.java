@@ -199,3 +199,7 @@ class FinalizeHandle implements Handle {
 	}
 
 }
+
+class GracefulDisconnectHandle implements Handle {
+	private static final long serialVersionUID = -172006718701842237L;
+}
