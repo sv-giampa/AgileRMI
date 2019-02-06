@@ -9,15 +9,13 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
 import agilermi.authentication.Authenticator;
-import agilermi.communication.DefaultSSLServerSocketFactory;
-import agilermi.communication.DefaultSSLSocketFactory;
 import agilermi.communication.gzip.GzipEndpointFactory;
 import agilermi.configuration.FailureObserver;
 import agilermi.core.RmiHandler;
@@ -38,13 +36,13 @@ class ClientTest {
 	RmiHandler rmiHandler;
 	TestIF stub;
 
-	@BeforeEach
+	@BeforeAll
 	void setUp() throws Exception {
 		serverSetUp();
 		clientSetUp();
 	}
 
-	@AfterEach
+	@AfterAll
 	void unSet() throws Exception {
 		clientRegistry.finalize();
 		serverRegistry.finalize();
@@ -69,7 +67,8 @@ class ClientTest {
 		// object server creation
 		// serverRegistry = new RmiRegistry(3031, true);
 		serverRegistry = RmiRegistry.builder()
-				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory())
+				// .setSocketFactories(new DefaultSSLSocketFactory(), new
+				// DefaultSSLServerSocketFactory())
 				.setProtocolEndpointFactory(new GzipEndpointFactory()).setAuthenticator(authenticator).build();
 		serverRegistry.exportInterface(TestIF.class);
 
@@ -85,7 +84,8 @@ class ClientTest {
 	void clientSetUp() throws Exception {
 		// create the registry
 		clientRegistry = RmiRegistry.builder()
-				.setSocketFactories(new DefaultSSLSocketFactory(), new DefaultSSLServerSocketFactory())
+				// .setSocketFactories(new DefaultSSLSocketFactory(), new
+				// DefaultSSLServerSocketFactory())
 				.setProtocolEndpointFactory(new GzipEndpointFactory()).build();
 		clientRegistry.setAuthentication("localhost", 3031, "testId", "testPass");
 		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);

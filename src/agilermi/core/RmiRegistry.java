@@ -130,6 +130,7 @@ public class RmiRegistry {
 		};
 	};
 
+	private boolean finalized = false;
 	/**
 	 * Defines the {@link FailureObserver} used to manage the peer which closed the
 	 * connection
@@ -137,6 +138,8 @@ public class RmiRegistry {
 	FailureObserver failureObserver = new FailureObserver() {
 		@Override
 		public void failure(RmiHandler rmiHandler, Exception exception) {
+			if (finalized)
+				return;
 			List<RmiHandler> list = handlers.get(rmiHandler.getInetSocketAddress());
 			if (list != null)
 				list.remove(rmiHandler);
@@ -384,6 +387,8 @@ public class RmiRegistry {
 	public void finalize(boolean signalHandlersFailures) {
 		synchronized (lock) {
 			disableListener();
+
+			finalized = true;
 			for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext(); it.remove())
 				for (RmiHandler rmiHandler : handlers.get(it.next()))
 					rmiHandler.dispose(signalHandlersFailures);
