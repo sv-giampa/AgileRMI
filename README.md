@@ -15,7 +15,7 @@ The fundamental specifics and goals of the library:
 - It provides a full distributed garbage collection system to avoid memory leaks on the machines that expose remote objects.
 - Supports a built-in authentication for new RMI incoming connections and access authorization on invocations. The authentication and the authorization methods are fully customizable by the developer through the Authenticator interface. For instance, this functionality is useful to authenticate the users respect to a database. Moreover, AgileRMI provides its basic, non-scalable implementation for authentication and authorization, too, exported by the StandardAuthenticator class.
 
-AgileRMI want not offer code mobility, because it is intended to be suitable also for systems that requires very strict security constraints, such as Android devices, but it is surely a very good base for weak and strog code mobility systems, for distributed file systems, and so on.
+AgileRMI want not offer code mobility, because it is intended to be suitable also for systems that requires very strict security constraints, such as Android devices, but it is surely a very good base for weak and strong code mobility systems, for distributed file systems, and so on.
 
 ## References
 See the documentation at: https://sv-giampa.github.io/AgileRMI/
