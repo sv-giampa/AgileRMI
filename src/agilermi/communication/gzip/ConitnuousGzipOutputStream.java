@@ -23,13 +23,13 @@ import java.io.OutputStream;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * This class uses the {@link GZIPOutputStream} of the standard JDK to
- * implements a continuous buffered output stream for data compression. This
- * stream does not need you to invoke a finish() method as the
- * {@link GZIPOutputStream} do. This stream is usable just as any other stream
- * decorator with the basic methods {@link #write(int)}, {@link #flush()},
- * {@link #close()} and so on. To reach its goal, this class buffers the data
- * bytes and compresses them per blocks.
+ * This class uses the {@link GZIPOutputStream} of the standard JDK to implement
+ * a continuous buffered output stream for data compression. This stream does
+ * not need you to invoke a finish() method as the {@link GZIPOutputStream} do.
+ * This stream is usable just as any other stream decorator with the basic
+ * methods {@link #write(int)}, {@link #flush()}, {@link #close()} and so on. To
+ * reach its goal, this class buffers the data bytes and compresses them per
+ * blocks.
  * 
  * @author Salvatore Giampa'
  *

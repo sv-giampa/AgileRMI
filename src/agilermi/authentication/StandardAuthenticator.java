@@ -31,7 +31,7 @@ import java.util.TreeSet;
 /**
  * Standard authenticator implementation that maintain authentication
  * information in central memory. It stores authentication identifiers and the
- * SHA-1 values of related pass-phrases. It allows to and authorization rules.
+ * SHA-1 values of related pass-phrases. It allows to add authorization rules.
  * 
  * @author Salvatore Giampa'
  *
@@ -51,11 +51,13 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	// negative authorizations set
 	private static final int NEGATIVE_SET = 1;
 
-	// Object-Method, Method, Object and Class levels for access authorization
-	// setArray[USER_LEVEL][POSITIVE_SET] => set of granted accesses for users
-	// setArray[USER_LEVEL][NEGATIVE_SET] => set of negated accesses for users
-	// setArray[ROLE_LEVEL][POSITIVE_SET] => set of granted accesses for roles
-	// setArray[ROLE_LEVEL][NEGATIVE_SET] => set of negated accesses for roles
+	/*
+	 * Object-Method, Method, Object and Class levels for access authorization
+	 * setArray[USER_LEVEL][POSITIVE_SET] => set of granted accesses for users
+	 * setArray[USER_LEVEL][NEGATIVE_SET] => set of negated accesses for users
+	 * setArray[ROLE_LEVEL][POSITIVE_SET] => set of granted accesses for roles
+	 * setArray[ROLE_LEVEL][NEGATIVE_SET] => set of negated accesses for roles
+	 */
 	@SuppressWarnings("unchecked")
 	private HashSet<ObjectMethodAccess>[/* AUTH LEVEL */][/* AUTH SET */] objectMethodSet = (HashSet<ObjectMethodAccess>[][]) new HashSet<?>[][] {
 			new HashSet<?>[] { new HashSet<ObjectMethodAccess>(), new HashSet<ObjectMethodAccess>() },
@@ -115,7 +117,7 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	}
 
 	/**
-	 * REgister a new identity
+	 * Register a new identity
 	 * 
 	 * @param authId     authentication id
 	 * @param passphrase authentication pass-phrase

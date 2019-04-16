@@ -18,6 +18,8 @@
 package agilermi.core;
 
 import java.io.Serializable;
+import java.net.URL;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -31,6 +33,12 @@ import java.util.concurrent.Semaphore;
  */
 interface Handle extends Serializable {
 
+}
+
+class CodebasesHandle implements Handle {
+	private static final long serialVersionUID = -7195041483720248013L;
+
+	Set<URL> codebases;
 }
 
 /**

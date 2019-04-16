@@ -237,4 +237,11 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 		this.reset();
 	}
 
+	@Override
+	public void close() throws IOException {
+		reset();
+		super.close();
+		System.gc();
+	}
+
 }

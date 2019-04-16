@@ -20,13 +20,14 @@ package agilermi.core;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
+import java.io.ObjectStreamClass;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 
 /**
- * This class extends the standard {@link ObjectInputStream} to give an object
- * context to the deserializing {@link RemoteInvocationHandler} instances. This
+ * This class extends the standard {@link ObjectInputStream} and it gives an RMI
+ * context to the deserialized {@link RemoteInvocationHandler} instances. This
  * class is the left ventricle of the heart of the deep remote referencing
  * mechanism, that replaces all the remote object references with their remote
  * stub, when they are sent on the network. Its counterpart is the
@@ -39,15 +40,16 @@ class RmiObjectInputStream extends ObjectInputStream {
 	private String remoteAddress;
 	private int remotePort;
 	private RmiRegistry rmiRegistry;
-
-	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, String remoteAddress, int remotePort)
-			throws IOException {
-		super(inputStream);
-		this.rmiRegistry = rmiRegistry;
-		this.remoteAddress = remoteAddress;
-		this.remotePort = remotePort;
-		this.enableResolveObject(true);
-	}
+	private RmiClassLoader rmiClassLoader;
+//
+//	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, String remoteAddress, int remotePort)
+//			throws IOException {
+//		super(inputStream);
+//		this.rmiRegistry = rmiRegistry;
+//		this.remoteAddress = remoteAddress;
+//		this.remotePort = remotePort;
+//		this.enableResolveObject(true);
+//	}
 
 	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, InetSocketAddress address)
 			throws IOException {
@@ -55,7 +57,12 @@ class RmiObjectInputStream extends ObjectInputStream {
 		this.rmiRegistry = rmiRegistry;
 		this.remoteAddress = address.getHostString();
 		this.remotePort = address.getPort();
+		this.rmiClassLoader = new RmiClassLoader(ClassLoader.getSystemClassLoader());
 		this.enableResolveObject(true);
+	}
+
+	public RmiClassLoader getRmiClassLoader() {
+		return rmiClassLoader;
 	}
 
 	public RmiRegistry getRmiRegistry() {
@@ -71,6 +78,18 @@ class RmiObjectInputStream extends ObjectInputStream {
 	}
 
 	@Override
+	protected Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
+		if (rmiClassLoader != null)
+			try {
+				Class<?> cls = rmiClassLoader.loadClass(desc.getName());
+				// System.out.println("resolve class: " + desc.getName());
+				return cls;
+			} catch (Exception e) {
+			}
+		return super.resolveClass(desc);
+	}
+
+	@Override
 	protected Object resolveObject(Object obj) throws IOException {
 
 		if (Proxy.isProxyClass(obj.getClass())) {
@@ -79,7 +98,7 @@ class RmiObjectInputStream extends ObjectInputStream {
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler sih = (RemoteInvocationHandler) ih;
 				if (sih.registryKey.equals(rmiRegistry.registryKey)) {
-					System.out.println("remote reference rplaced with local object");
+					// System.out.println("remote reference rplaced with local object");
 					return rmiRegistry.getRemoteObject(sih.getObjectId());
 				}
 			}
@@ -94,6 +113,17 @@ class RmiObjectInputStream extends ObjectInputStream {
 		}
 
 		return obj;
+	}
+
+	@Override
+	public void close() throws IOException {
+		if (rmiClassLoader != null) {
+			rmiClassLoader.close();
+			rmiClassLoader = null;
+		}
+		reset();
+		super.close();
+		System.gc();
 	}
 
 }

@@ -46,4 +46,6 @@ public interface ProtocolEndpoint {
 	 * @return the input stream
 	 */
 	InputStream getInputStream();
+
+	void connectionEnd();
 }

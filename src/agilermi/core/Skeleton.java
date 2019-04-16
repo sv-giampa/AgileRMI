@@ -27,11 +27,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import agilermi.configuration.Unreferenced;
+
 /**
  * Represents a local remote object exposed by a local {@link RmiRegistry}
- * instance on the network. An instance of this class is proxy for a remote
+ * instance on the network. An instance of this class is a proxy for a remote
  * object. Instances of this class count the remote references to a remote
- * object and act the local garbage collection mechanism. This is the main
+ * object and act the distributed garbage collection mechanism. This is the main
  * component used to act the distributed garbage collection.
  * 
  * @author Salvatore Giampa'
@@ -60,9 +62,9 @@ class Skeleton {
 
 	synchronized void removeRef(RmiHandler rmiHandler) {
 		Integer count = refCounters.get(rmiHandler);
-		if (count == null)
+		if (count == null || count <= 0)
 			return;
-		count--;
+		count = count - 1;
 		refCounters.put(rmiHandler, count);
 		refGlobalCounter--;
 
@@ -99,13 +101,15 @@ class Skeleton {
 			scheduledRemove = new Thread(() -> {
 				// System.out.println("[Skeleton] scheduleRemove: start");
 				try {
-					Thread.sleep(10000);
+					Thread.sleep(rmiRegistry.getDgcLeaseValue());
 				} catch (InterruptedException e) {
 					return;
 				}
 				// System.out.println("[Skeleton] scheduleRemove: removed");
 				synchronized (Skeleton.this) {
 					if (refGlobalCounter == 0 && names.isEmpty()) {
+						if (object instanceof Unreferenced)
+							((Unreferenced) object).unreferenced();
 						rmiRegistry.unpublish(object);
 					}
 				}

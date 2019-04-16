@@ -22,8 +22,10 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -33,6 +35,12 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
@@ -61,6 +69,15 @@ import agilermi.exception.RemoteException;
  */
 public class RmiRegistry {
 
+	private ExecutorService executorService = Executors.newFixedThreadPool(1, new ThreadFactory() {
+		@Override
+		public Thread newThread(Runnable task) {
+			Thread th = new Thread(task);
+			th.setDaemon(true);
+			return th;
+		}
+	});
+
 	// identifies the current instance of RmiRegistry. It serves to avoid loop-back
 	// connections and to replace remote pointer that point to an object on this
 	// same registry with their local instance
@@ -68,6 +85,11 @@ public class RmiRegistry {
 
 	// lock for synchronized access to this instance
 	private Object lock = new Object();
+
+	// codebases for code mobilitys
+	private Set<URL> codebases;
+
+	private boolean codeMobilityEnabled = false;
 
 	// the server socket created by the last call to the enableListener() method
 	private ServerSocket serverSocket;
@@ -82,8 +104,8 @@ public class RmiRegistry {
 	private int listenerPort;
 
 	// socket factories
-	private ServerSocketFactory ssFactory;
-	private SocketFactory sFactory;
+	private ServerSocketFactory serverSocketFactory;
+	private SocketFactory socketFactory;
 
 	// failure observers
 	private Set<FailureObserver> failureObservers = new HashSet<>();
@@ -109,6 +131,36 @@ public class RmiRegistry {
 
 	// map: "address:port" -> "authIdentifier:authPassphrase"
 	private Map<String, String[]> authenticationMap = new TreeMap<>();
+
+	private int dgcLeaseValue = 30000;
+
+	/**
+	 * Gets the lease timeout after that the distributed garbage collection
+	 * mechanism will remove a non-named object from the registry.
+	 * 
+	 * @return the lease timeout value in milliseconds
+	 */
+	public int getDgcLeaseValue() {
+		return dgcLeaseValue;
+	}
+
+	/**
+	 * Sets the lease timeout after that the distributed garbage collection
+	 * mechanism will remove a non-named object from the registry.
+	 * 
+	 * @param dgcLeaseValue the lease timeout value in milliseconds
+	 */
+	public void setDgcLeaseValue(int dgcLeaseValue) {
+		this.dgcLeaseValue = dgcLeaseValue;
+	}
+
+	public Set<URL> getCodebases() {
+		return codebases;
+	}
+
+	public boolean isCodeMobilityEnabled() {
+		return codeMobilityEnabled;
+	}
 
 	/**
 	 * Defines the main thread that accepts new incoming connections and creates
@@ -269,6 +321,17 @@ public class RmiRegistry {
 		// authentication
 		private Authenticator authenticator;
 
+		// code mobility
+		private Set<URL> codebases = new HashSet<>();
+		private boolean codeMobilityEnabled = false;
+
+		public Builder enableCodeMobility(boolean codeMobilityEnabled) {
+			if (codeMobilityEnabled && System.getProperty("java.vendor").matches(".*Android.*"))
+				throw new IllegalStateException("The RMI code mobility is not supported on this platform.");
+			this.codeMobilityEnabled = codeMobilityEnabled;
+			return this;
+		}
+
 		/**
 		 * Set an {@link Authenticator} object that intercept authentication and
 		 * authorization requests from remote machines.
@@ -319,7 +382,9 @@ public class RmiRegistry {
 		 */
 		public RmiRegistry build() {
 			RmiRegistry rmiRegistry = new RmiRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
-					authenticator);
+					authenticator, codeMobilityEnabled, codebases);
+
+			codebases = new HashSet<>();
 			return rmiRegistry;
 		}
 	}
@@ -347,7 +412,8 @@ public class RmiRegistry {
 	 * @see RmiRegistry#builder()
 	 */
 	private RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			ProtocolEndpointFactory protocolEndpointFactory, Authenticator authenticator) {
+			ProtocolEndpointFactory protocolEndpointFactory, Authenticator authenticator, boolean codeMobilityEnabled,
+			Set<URL> codebases) {
 		if (serverSocketFactory == null)
 			serverSocketFactory = ServerSocketFactory.getDefault();
 		if (socketFactory == null)
@@ -358,10 +424,12 @@ public class RmiRegistry {
 				+ Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong())
 				+ Long.toHexString(random.nextLong());
 
-		this.ssFactory = serverSocketFactory;
-		this.sFactory = socketFactory;
+		this.serverSocketFactory = serverSocketFactory;
+		this.socketFactory = socketFactory;
 		this.protocolEndpointFactory = protocolEndpointFactory;
 		this.authenticator = authenticator;
+		this.codeMobilityEnabled = codeMobilityEnabled;
+		this.codebases = Collections.synchronizedSet(codebases);
 	}
 
 	/**
@@ -500,8 +568,8 @@ public class RmiRegistry {
 	public Object getStub(String address, int port, String objectId, boolean createNewHandler)
 			throws UnknownHostException, IOException, InterruptedException {
 
-		RemoteInterfaceHandle hnd = new RemoteInterfaceHandle(objectId);
 		RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
+		RemoteInterfaceHandle hnd = new RemoteInterfaceHandle(objectId);
 		rmiHandler.putHandle(hnd);
 		hnd.semaphore.acquire();
 
@@ -533,21 +601,57 @@ public class RmiRegistry {
 	 *                      existing one
 	 * @return the object peer related to the specified host
 	 * @throws UnknownHostException if the host address cannot be resolved
-	 * @throws IOException          if I/O errors occur
+	 * @throws IOException          if I/O errors occurs
 	 */
 	public RmiHandler getRmiHandler(String host, int port, boolean newConnection) throws IOException {
-		synchronized (handlers) {
-			InetSocketAddress inetAddress = new InetSocketAddress(host, port);
-			if (!handlers.containsKey(inetAddress))
-				handlers.put(inetAddress, new ArrayList<>(1));
-			List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
-			RmiHandler rmiHandler = null;
-			if (rmiHandlers.size() == 0 || newConnection)
-				rmiHandlers.add(
-						rmiHandler = new RmiHandler(sFactory.createSocket(host, port), this, protocolEndpointFactory));
-			else
-				rmiHandler = rmiHandlers.get((int) (Math.random() * rmiHandlers.size()));
-			return rmiHandler;
+		Callable<RmiHandler> callable = () -> {
+			synchronized (handlers) {
+				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
+				if (!handlers.containsKey(inetAddress))
+					handlers.put(inetAddress, new ArrayList<>(1));
+				List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
+				RmiHandler rmiHandler = null;
+				if (rmiHandlers.size() == 0 || newConnection)
+					rmiHandlers.add(rmiHandler = new RmiHandler(socketFactory.createSocket(host, port),
+							RmiRegistry.this, protocolEndpointFactory));
+				rmiHandler = rmiHandlers.get(0);
+				// rmiHandler = rmiHandlers.get((int) (Math.random() * rmiHandlers.size()));
+				return rmiHandler;
+			}
+		};
+
+		Future<RmiHandler> future = executorService.submit(callable);
+		try {
+			return future.get();
+		} catch (InterruptedException e) {
+			return null;
+		} catch (ExecutionException e) {
+			throw (IOException) e.getCause();
+		}
+	}
+
+	public void closeAllConnections(String host, int port) throws IOException {
+		Callable<Void> callable = () -> {
+			synchronized (handlers) {
+				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
+				if (!handlers.containsKey(inetAddress))
+					return null;
+				List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
+				for (RmiHandler hnd : rmiHandlers) {
+					hnd.dispose(false);
+				}
+				rmiHandlers.clear();
+			}
+			return null;
+		};
+
+		Future<Void> future = executorService.submit(callable);
+		try {
+			future.get();
+		} catch (InterruptedException e) {
+			return;
+		} catch (ExecutionException e) {
+			throw (IOException) e.getCause();
 		}
 	}
 
@@ -562,14 +666,23 @@ public class RmiRegistry {
 	 * @throws IOException if I/O errors occur
 	 */
 	public void enableListener(int port, boolean daemon) throws IOException {
-		synchronized (ssFactory) {
-			if (listener != null)
-				disableListener();
-			serverSocket = ssFactory.createServerSocket(port);
-			this.listenerPort = serverSocket.getLocalPort();
-			listener = new Thread(listenerTask);
-			listener.setDaemon(daemon);
-			listener.start();
+		Callable<Void> callable = () -> {
+			synchronized (serverSocketFactory) {
+				if (listener != null)
+					disableListener();
+				serverSocket = serverSocketFactory.createServerSocket(port);
+				this.listenerPort = serverSocket.getLocalPort();
+				listener = new Thread(listenerTask);
+				listener.setDaemon(daemon);
+				listener.start();
+			}
+			return null;
+		};
+		try {
+			executorService.submit(callable).get();
+		} catch (InterruptedException e) {
+		} catch (ExecutionException e) {
+			throw (IOException) e.getCause();
 		}
 	}
 
@@ -578,17 +691,25 @@ public class RmiRegistry {
 	 * accept new incoming connections, but does not close the current open ones.
 	 */
 	public void disableListener() {
-		synchronized (ssFactory) {
-			if (listener == null)
-				return;
+		Callable<Void> callable = () -> {
+			synchronized (serverSocketFactory) {
+				if (listener == null)
+					return null;
 
-			listener.interrupt();
-			listener = null;
-			try {
-				serverSocket.close();
-			} catch (IOException e) {
-				e.printStackTrace();
+				listener.interrupt();
+				listener = null;
+				try {
+					serverSocket.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
 			}
+			return null;
+		};
+		try {
+			executorService.submit(callable).get();
+		} catch (InterruptedException e) {
+		} catch (ExecutionException e) {
 		}
 	}
 

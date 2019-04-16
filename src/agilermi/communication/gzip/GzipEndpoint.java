@@ -16,6 +16,7 @@
  **/
 package agilermi.communication.gzip;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
@@ -42,6 +43,20 @@ public class GzipEndpoint implements ProtocolEndpoint {
 	@Override
 	public InputStream getInputStream() {
 		return input;
+	}
+
+	@Override
+	public void connectionEnd() {
+		try {
+			output.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		try {
+			input.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
 
 }

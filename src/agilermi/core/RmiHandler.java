@@ -27,6 +27,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Collections;
@@ -38,7 +39,6 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.Semaphore;
 
 import javax.net.SocketFactory;
 
@@ -93,6 +93,10 @@ public class RmiHandler {
 	// same machine and uses the same registry of this one
 	private boolean sameRegistryAuthentication = false;
 
+	private ProtocolEndpoint protocolEndpoint;
+
+	private int codebasesHash;
+
 	/**
 	 * Gets the address of the remote process (IP address + TCP port)
 	 * 
@@ -123,8 +127,20 @@ public class RmiHandler {
 		try {
 			socket.close();
 		} catch (IOException e) {
-			e.printStackTrace();
 		}
+
+		try {
+			out.close();
+		} catch (IOException e1) {
+		}
+
+		try {
+			in.close();
+		} catch (IOException e1) {
+		}
+
+		if (protocolEndpoint != null)
+			protocolEndpoint.connectionEnd();
 
 		// let the stubs to return
 		for (InvocationHandle handle : invocations.values()) {
@@ -162,6 +178,7 @@ public class RmiHandler {
 		in = null;
 		invocations.clear();
 		handleQueue.clear();
+		System.gc();
 	}
 
 	/**
@@ -245,14 +262,14 @@ public class RmiHandler {
 
 		// if on the other side there is not the same registry of this handler, do
 		// normal authentication
-		out.writeUnshared(authIdentifier);
-		out.writeUnshared(authPassphrase);
+		out.writeUTF(authIdentifier);
+		out.writeUTF(authPassphrase);
 		out.flush();
 
 		String authPass;
 		try {
-			remoteAuthIdentifier = (String) in.readUnshared();
-			authPass = (String) in.readUnshared();
+			remoteAuthIdentifier = in.readUTF();
+			authPass = in.readUTF();
 		} catch (Exception e) {
 			e.printStackTrace();
 			try {
@@ -328,12 +345,16 @@ public class RmiHandler {
 			authIdentifier = auth[0];
 			authPassphrase = auth[1];
 		}
+		if (authIdentifier == null)
+			authIdentifier = "";
+		if (authPassphrase == null)
+			authPassphrase = "";
 
 		OutputStream output = socket.getOutputStream();
 		InputStream input = socket.getInputStream();
 
 		if (protocolEndpointFactory != null) {
-			ProtocolEndpoint protocolEndpoint = protocolEndpointFactory.createEndpoint(output, input);
+			protocolEndpoint = protocolEndpointFactory.createEndpoint(output, input);
 			output = protocolEndpoint.getOutputStream();
 			input = protocolEndpoint.getInputStream();
 		}
@@ -342,8 +363,9 @@ public class RmiHandler {
 		out.flush();
 		in = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress);
 
-		// send authentication
+		// send and receive authentication
 		authentication();
+
 		receiver.setDaemon(true);
 		sender.setDaemon(true);
 		receiver.start();
@@ -358,7 +380,7 @@ public class RmiHandler {
 	 * class loader and they must be known by the local runtime.
 	 * 
 	 * @param objectId the object identifier
-	 * @param          <T> the stub interface type
+	 * @param <T>      the stub interface type
 	 * @return A dynamic proxy object that represents the remote instance. It is an
 	 *         instance for the specified stub interface
 	 */
@@ -381,7 +403,7 @@ public class RmiHandler {
 	 * @param stubInterfaces the interface whose methods must be stubbed, that is
 	 *                       the interface used to access the remote object
 	 *                       operations
-	 * @param                <T> the stub interface type
+	 * @param <T>            the stub interface type
 	 * @return A dynamic proxy object that represents the remote instance. It is an
 	 *         instance for the specified stub interface
 	 */
@@ -421,8 +443,22 @@ public class RmiHandler {
 	 * @throws InterruptedException
 	 */
 	void putHandle(Handle handle) throws InterruptedException {
-		if (handleQueue != null)
+		if (handleQueue != null) {
+			if (codebasesHash != rmiRegistry.getCodebases().hashCode()) {
+				Set<URL> codebases = rmiRegistry.getCodebases();
+				codebasesHash = codebases.hashCode();
+				if (!codebases.isEmpty()) {
+					CodebasesHandle cbhandle = new CodebasesHandle();
+					cbhandle.codebases = codebases;
+					try {
+						handleQueue.put(cbhandle);
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+			}
 			handleQueue.put(handle);
+		}
 	}
 
 	/**
@@ -436,8 +472,6 @@ public class RmiHandler {
 
 			Handle handle = null;
 			try {
-
-				startRead.release();
 
 				while (!isInterrupted()) {
 					handle = null;
@@ -455,9 +489,8 @@ public class RmiHandler {
 							}
 							throw e;
 						}
-					} else if (handle instanceof ReturnHandle) { // send
-																	// invocation
-																	// response
+					} else if (handle instanceof ReturnHandle) {
+						// send invocation response
 						ReturnHandle ret = (ReturnHandle) handle;
 						try {
 							out.writeUnshared(ret);
@@ -487,6 +520,7 @@ public class RmiHandler {
 
 				if (handle != null) {
 					if (handle instanceof InvocationHandle) {
+						// release invocation
 						InvocationHandle invocation = (InvocationHandle) handle;
 						invocation.thrownException = e;
 						invocation.semaphone.release();
@@ -508,8 +542,6 @@ public class RmiHandler {
 		}
 	};
 
-	private Semaphore startRead = new Semaphore(0);
-
 	/**
 	 * This is the thread that manages the input stream of the connection only. It
 	 * receives new method invocations by the other peer or the invocation results.
@@ -521,11 +553,19 @@ public class RmiHandler {
 		@Override
 		public void run() {
 			try {
-				// receive authentication
-				startRead.acquire();
-
 				while (!isInterrupted()) {
-					Handle handle = (Handle) (in.readUnshared());
+					Handle handle = null;
+					try {
+						handle = (Handle) (in.readUnshared());
+					} catch (Exception e) {
+						System.out.println("Exception during receiving handle:");
+						// e.printStackTrace();
+						ReturnHandle retHandle = new ReturnHandle();
+						retHandle.thrownException = e;
+						putHandle(retHandle);
+						Thread.sleep(rmiRegistry.getDgcLeaseValue());
+						throw e; // connection is broken
+					}
 					if (handle instanceof InvocationHandle) {
 						InvocationHandle invocation = (InvocationHandle) handle;
 
@@ -607,6 +647,8 @@ public class RmiHandler {
 
 							// notify the invocation handler that is waiting on it
 							invocation.semaphone.release();
+						} else if (ret.thrownException != null && ret.thrownException instanceof Exception) {
+							throw (Exception) ret.thrownException;
 						}
 					} else if (handle instanceof FinalizeHandle) {
 						FinalizeHandle finHandle = (FinalizeHandle) handle;
@@ -631,6 +673,17 @@ public class RmiHandler {
 							RemoteInterfaceHandle req = interfaceRequests.get(rih.handleId);
 							req.interfaces = rih.interfaces;
 							req.semaphore.release();
+						}
+					} else if (handle instanceof CodebasesHandle) {
+						CodebasesHandle cbhnd = (CodebasesHandle) handle;
+						RmiClassLoader classLoader = in.getRmiClassLoader();
+						Set<URL> loaderCodebases = classLoader.getURLs();
+						Set<URL> codebases = rmiRegistry.getCodebases();
+						codebases.removeAll(loaderCodebases);
+						classLoader.removeAllURLs();
+						for (URL url : cbhnd.codebases) {
+							classLoader.addURL(url);
+							codebases.add(url);
 						}
 					} else {
 						throw new RuntimeException("AgileRMI INTERNAL ERROR");
