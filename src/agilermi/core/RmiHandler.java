@@ -32,6 +32,7 @@ import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -62,8 +63,8 @@ public class RmiHandler {
 	// connection details, socket and streams
 	private InetSocketAddress inetSocketAddress;
 	private Socket socket;
-	private RmiObjectOutputStream out;
-	private RmiObjectInputStream in;
+	private RmiObjectOutputStream outputStream;
+	private RmiObjectInputStream inputStream;
 
 	// registry associated to this handler
 	private RmiRegistry rmiRegistry;
@@ -130,12 +131,12 @@ public class RmiHandler {
 		}
 
 		try {
-			out.close();
+			outputStream.close();
 		} catch (IOException e1) {
 		}
 
 		try {
-			in.close();
+			inputStream.close();
 		} catch (IOException e1) {
 		}
 
@@ -174,8 +175,8 @@ public class RmiHandler {
 		}
 
 		socket = null;
-		out = null;
-		in = null;
+		outputStream = null;
+		inputStream = null;
 		invocations.clear();
 		handleQueue.clear();
 		System.gc();
@@ -243,38 +244,38 @@ public class RmiHandler {
 	private void authentication() throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
 		// checks that on the other side of the connection there is a handler that uses
 		// the same registry of this one
-		out.writeUTF(rmiRegistry.registryKey);
-		out.flush();
-		String remoteRegistryKey = in.readUTF();
+		outputStream.writeUTF(rmiRegistry.registryKey);
+		outputStream.flush();
+		String remoteRegistryKey = inputStream.readUTF();
 
 		if (remoteRegistryKey.equals(rmiRegistry.registryKey)) {
 			sameRegistryAuthentication = true;
-			out.writeBoolean(true);
-			out.flush();
+			outputStream.writeBoolean(true);
+			outputStream.flush();
 		} else {
 			sameRegistryAuthentication = false;
-			out.writeBoolean(false);
-			out.flush();
+			outputStream.writeBoolean(false);
+			outputStream.flush();
 		}
 
-		if (in.readBoolean()) // the remote handler recognized the registry key
+		if (inputStream.readBoolean()) // the remote handler recognized the registry key
 			return;
 
 		// if on the other side there is not the same registry of this handler, do
 		// normal authentication
-		out.writeUTF(authIdentifier);
-		out.writeUTF(authPassphrase);
-		out.flush();
+		outputStream.writeUTF(authIdentifier);
+		outputStream.writeUTF(authPassphrase);
+		outputStream.flush();
 
 		String authPass;
 		try {
-			remoteAuthIdentifier = in.readUTF();
-			authPass = in.readUTF();
+			remoteAuthIdentifier = inputStream.readUTF();
+			authPass = inputStream.readUTF();
 		} catch (Exception e) {
 			e.printStackTrace();
 			try {
-				out.writeBoolean(false);
-				out.flush();
+				outputStream.writeBoolean(false);
+				outputStream.flush();
 			} catch (IOException e1) {
 			}
 			throw new LocalAuthenticationException();
@@ -283,20 +284,20 @@ public class RmiHandler {
 		if (rmiRegistry.getAuthenticator() == null
 				|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
 			try {
-				out.writeBoolean(true);
-				out.flush();
+				outputStream.writeBoolean(true);
+				outputStream.flush();
 			} catch (IOException e1) {
 			}
 		} else {
 			try {
-				out.writeBoolean(false);
-				out.flush();
+				outputStream.writeBoolean(false);
+				outputStream.flush();
 			} catch (IOException e1) {
 			}
 			throw new LocalAuthenticationException();
 		}
 
-		boolean authResult = in.readBoolean();
+		boolean authResult = inputStream.readBoolean();
 
 		if (!authResult)
 			throw new RemoteAuthenticationException();
@@ -359,9 +360,10 @@ public class RmiHandler {
 			input = protocolEndpoint.getInputStream();
 		}
 
-		out = new RmiObjectOutputStream(output, rmiRegistry);
-		out.flush();
-		in = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress);
+		outputStream = new RmiObjectOutputStream(output, rmiRegistry);
+		outputStream.flush();
+		inputStream = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress,
+				rmiRegistry.getClassLoaderFactory());
 
 		// send and receive authentication
 		authentication();
@@ -445,12 +447,14 @@ public class RmiHandler {
 	void putHandle(Handle handle) throws InterruptedException {
 		if (handleQueue != null) {
 			if (codebasesHash != rmiRegistry.getCodebases().hashCode()) {
-				Set<URL> codebases = rmiRegistry.getCodebases();
+				Set<URL> codebases = new HashSet<>(rmiRegistry.getCodebases());
 				codebasesHash = codebases.hashCode();
 				if (!codebases.isEmpty()) {
 					CodebasesHandle cbhandle = new CodebasesHandle();
 					cbhandle.codebases = codebases;
 					try {
+						for (URL url : codebases)
+							inputStream.getRmiClassLoader().addURL(url);
 						handleQueue.put(cbhandle);
 					} catch (InterruptedException e) {
 						e.printStackTrace();
@@ -480,7 +484,7 @@ public class RmiHandler {
 					if (handle instanceof InvocationHandle) {
 						InvocationHandle invocation = (InvocationHandle) handle;
 						try {
-							out.writeUnshared(handle);
+							outputStream.writeUnshared(handle);
 							invocations.put(invocation.id, invocation);
 						} catch (NotSerializableException e) {
 							invocation.thrownException = e;
@@ -493,12 +497,12 @@ public class RmiHandler {
 						// send invocation response
 						ReturnHandle ret = (ReturnHandle) handle;
 						try {
-							out.writeUnshared(ret);
+							outputStream.writeUnshared(ret);
 						} catch (NotSerializableException e) {
 							ret.returnValue = null;
 							ret.returnClass = null;
 							ret.thrownException = e;
-							out.writeUnshared(ret);
+							outputStream.writeUnshared(ret);
 							e.printStackTrace();
 						}
 
@@ -507,12 +511,12 @@ public class RmiHandler {
 						if (rih.interfaces == null) {
 							interfaceRequests.put(rih.handleId, rih);
 						}
-						out.writeUnshared(rih);
+						outputStream.writeUnshared(rih);
 					} else {
-						out.writeUnshared(handle);
+						outputStream.writeUnshared(handle);
 					}
 
-					out.flush();
+					outputStream.flush();
 				}
 			} catch (IOException | InterruptedException e) { // something gone wrong, destroy the handler
 
@@ -556,7 +560,7 @@ public class RmiHandler {
 				while (!isInterrupted()) {
 					Handle handle = null;
 					try {
-						handle = (Handle) (in.readUnshared());
+						handle = (Handle) (inputStream.readUnshared());
 					} catch (Exception e) {
 						System.out.println("Exception during receiving handle:");
 						// e.printStackTrace();
@@ -675,15 +679,12 @@ public class RmiHandler {
 							req.semaphore.release();
 						}
 					} else if (handle instanceof CodebasesHandle) {
-						CodebasesHandle cbhnd = (CodebasesHandle) handle;
-						RmiClassLoader classLoader = in.getRmiClassLoader();
-						Set<URL> loaderCodebases = classLoader.getURLs();
-						Set<URL> codebases = rmiRegistry.getCodebases();
-						codebases.removeAll(loaderCodebases);
-						classLoader.removeAllURLs();
-						for (URL url : cbhnd.codebases) {
-							classLoader.addURL(url);
-							codebases.add(url);
+						if (rmiRegistry.isCodeMobilityEnabled()) {
+							CodebasesHandle cbhnd = (CodebasesHandle) handle;
+							RmiClassLoader classLoader = inputStream.getRmiClassLoader();
+							for (URL url : cbhnd.codebases) {
+								classLoader.addURL(url);
+							}
 						}
 					} else {
 						throw new RuntimeException("AgileRMI INTERNAL ERROR");

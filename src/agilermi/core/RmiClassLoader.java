@@ -3,46 +3,36 @@ package agilermi.core;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.URL;
-import java.net.URLClassLoader;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-public class RmiClassLoader extends ClassLoader implements Closeable {
-	private Map<URL, URLClassLoader> urlLoaders = new HashMap<>();
+import agilermi.classloading.ClassLoaderFactory;
+import agilermi.classloading.URLClassLoaderFactory;
 
-	public RmiClassLoader(ClassLoader parent) {
-		super(parent);
-		// System.out.println("RmiClassLoader created!");
+public class RmiClassLoader extends ClassLoader implements Closeable {
+	private Map<URL, ClassLoader> urlLoaders = new HashMap<>();
+	private Map<URL, Boolean> codebaseRefAdded = new HashMap<>();
+	private ClassLoaderFactory classLoaderFactory;
+	private RmiRegistry rmiRegistry;
+	private boolean closed = false;
+
+	public RmiClassLoader(ClassLoaderFactory classLoaderFactory, RmiRegistry rmiRegistry) {
+		super(ClassLoader.getSystemClassLoader());
+		this.rmiRegistry = rmiRegistry;
+		if (classLoaderFactory != null)
+			this.classLoaderFactory = classLoaderFactory;
+		else
+			this.classLoaderFactory = new URLClassLoaderFactory();
 	}
 
 	public synchronized void addURL(URL url) {
 		if (urlLoaders.containsKey(url))
 			return;
-		URLClassLoader urlLoader = URLClassLoader.newInstance(new URL[] { url }, super.getParent());
+		ClassLoader urlLoader = classLoaderFactory.createClassLoader(url);
 		urlLoaders.put(url, urlLoader);
-	}
-
-	public synchronized void removeURL(URL url) {
-		if (!urlLoaders.containsKey(url))
-			return;
-
-		try {
-			urlLoaders.remove(url).close();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-	}
-
-	public void removeAllURLs() {
-		for (URLClassLoader urlLoader : urlLoaders.values()) {
-			try {
-				urlLoader.close();
-			} catch (IOException e) {
-			}
-		}
-		urlLoaders.clear();
+		codebaseRefAdded.put(url, false);
 	}
 
 	public synchronized Set<URL> getURLs() {
@@ -51,9 +41,15 @@ public class RmiClassLoader extends ClassLoader implements Closeable {
 
 	@Override
 	public Class<?> findClass(String name) throws ClassNotFoundException {
-		for (URLClassLoader urlLoader : urlLoaders.values()) {
+		for (URL url : urlLoaders.keySet()) {
+			ClassLoader urlLoader = urlLoaders.get(url);
 			try {
-				return urlLoader.loadClass(name);
+				Class<?> cls = urlLoader.loadClass(name);
+				if (!codebaseRefAdded.get(url)) {
+					rmiRegistry.addCodebaseRef(url);
+					codebaseRefAdded.put(url, true);
+				}
+				return cls;
 			} catch (ClassNotFoundException e) {
 			}
 		}
@@ -62,13 +58,25 @@ public class RmiClassLoader extends ClassLoader implements Closeable {
 
 	@Override
 	protected void finalize() throws Throwable {
-		removeAllURLs();
+		close();
+		for (URL url : urlLoaders.keySet()) {
+			if (codebaseRefAdded.get(url))
+				rmiRegistry.removeCodebaseRef(url);
+		}
 		super.finalize();
-		// System.out.println("RmiClassLoader finalized!");
 	}
 
 	@Override
 	public void close() {
-		removeAllURLs();
+		if (closed)
+			return;
+		for (ClassLoader urlLoader : urlLoaders.values()) {
+			try {
+				if (urlLoader instanceof Closeable)
+					((Closeable) urlLoader).close();
+			} catch (IOException e) {
+			}
+		}
+		closed = true;
 	}
 }

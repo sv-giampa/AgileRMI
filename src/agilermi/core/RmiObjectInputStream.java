@@ -25,6 +25,8 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 
+import agilermi.classloading.ClassLoaderFactory;
+
 /**
  * This class extends the standard {@link ObjectInputStream} and it gives an RMI
  * context to the deserialized {@link RemoteInvocationHandler} instances. This
@@ -51,13 +53,13 @@ class RmiObjectInputStream extends ObjectInputStream {
 //		this.enableResolveObject(true);
 //	}
 
-	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, InetSocketAddress address)
-			throws IOException {
+	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, InetSocketAddress address,
+			ClassLoaderFactory classLoaderFactory) throws IOException {
 		super(inputStream);
 		this.rmiRegistry = rmiRegistry;
 		this.remoteAddress = address.getHostString();
 		this.remotePort = address.getPort();
-		this.rmiClassLoader = new RmiClassLoader(ClassLoader.getSystemClassLoader());
+		this.rmiClassLoader = new RmiClassLoader(classLoaderFactory, rmiRegistry);
 		this.enableResolveObject(true);
 	}
 

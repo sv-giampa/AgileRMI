@@ -46,6 +46,7 @@ import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 
 import agilermi.authentication.Authenticator;
+import agilermi.classloading.ClassLoaderFactory;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.FailureObserver;
@@ -86,8 +87,8 @@ public class RmiRegistry {
 	// lock for synchronized access to this instance
 	private Object lock = new Object();
 
-	// codebases for code mobilitys
-	private Set<URL> codebases;
+	// codebases for code mobility
+	private Map<URL, Integer> codebasesRefs = Collections.synchronizedMap(new HashMap<>());
 
 	private boolean codeMobilityEnabled = false;
 
@@ -134,33 +135,7 @@ public class RmiRegistry {
 
 	private int dgcLeaseValue = 30000;
 
-	/**
-	 * Gets the lease timeout after that the distributed garbage collection
-	 * mechanism will remove a non-named object from the registry.
-	 * 
-	 * @return the lease timeout value in milliseconds
-	 */
-	public int getDgcLeaseValue() {
-		return dgcLeaseValue;
-	}
-
-	/**
-	 * Sets the lease timeout after that the distributed garbage collection
-	 * mechanism will remove a non-named object from the registry.
-	 * 
-	 * @param dgcLeaseValue the lease timeout value in milliseconds
-	 */
-	public void setDgcLeaseValue(int dgcLeaseValue) {
-		this.dgcLeaseValue = dgcLeaseValue;
-	}
-
-	public Set<URL> getCodebases() {
-		return codebases;
-	}
-
-	public boolean isCodeMobilityEnabled() {
-		return codeMobilityEnabled;
-	}
+	private ClassLoaderFactory classLoaderFactory;
 
 	/**
 	 * Defines the main thread that accepts new incoming connections and creates
@@ -183,6 +158,7 @@ public class RmiRegistry {
 	};
 
 	private boolean finalized = false;
+
 	/**
 	 * Defines the {@link FailureObserver} used to manage the peer which closed the
 	 * connection
@@ -198,39 +174,25 @@ public class RmiRegistry {
 		}
 	};
 
-	/**
-	 * Adds authentication details for a remote host
-	 * 
-	 * @param host           the remote host
-	 * @param port           the remote port
-	 * @param authId         the authentication identifier
-	 * @param authPassphrase the authentication pass-phrase
-	 */
-	public void setAuthentication(String host, int port, String authId, String authPassphrase) {
-		try {
-			InetAddress address = InetAddress.getByName(host);
-			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
+	// authenticator objects that authenticates and authorize users
+	private Authenticator authenticator;
+
+	void addCodebaseRef(URL url) {
+		if (codebasesRefs.containsKey(url)) {
+			codebasesRefs.put(url, codebasesRefs.get(url) + 1);
+		} else {
+			codebasesRefs.put(url, 1);
 		}
-		String key = host + ":" + port;
-		String[] auth = new String[] { authId, authPassphrase };
-		authenticationMap.put(key, auth);
 	}
 
-	/**
-	 * Removes authentication details for a remote host
-	 * 
-	 * @param host the remote host
-	 * @param port the remote port
-	 */
-	public void removeAuthentication(String host, int port) {
-		try {
-			InetAddress address = InetAddress.getByName(host);
-			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
+	void removeCodebaseRef(URL url) {
+		if (codebasesRefs.containsKey(url)) {
+			Integer refCount = codebasesRefs.get(url) - 1;
+			if (refCount > 0)
+				codebasesRefs.put(url, refCount);
+			else
+				codebasesRefs.remove(url);
 		}
-		String key = host + ":" + port;
-		authenticationMap.remove(key);
 	}
 
 	/**
@@ -269,9 +231,6 @@ public class RmiRegistry {
 		String key = host + ":" + port;
 		return authenticationMap.get(key);
 	}
-
-	// authenticator objects that authenticates and authorize users
-	private Authenticator authenticator;
 
 	/**
 	 * Creates a new {@link RmiRegistry.Builder} instance, used to configure and
@@ -324,10 +283,44 @@ public class RmiRegistry {
 		// code mobility
 		private Set<URL> codebases = new HashSet<>();
 		private boolean codeMobilityEnabled = false;
+		private ClassLoaderFactory classLoaderFactory;
 
+		/**
+		 * Utility method to add a codebase at building time. Codebases can be added and
+		 * removed after the registry construction, too.
+		 * 
+		 * @param url the url to the codebase
+		 * @return this builder
+		 */
+		public Builder addCodebase(URL url) {
+			codebases.add(url);
+			return this;
+		}
+
+		/**
+		 * Set the class loader factory used by this registry to decode remote classes
+		 * when code mobility is enabled. It is necessary on some platforms that uses a
+		 * different implementation of the Java Virtual Machine.
+		 * 
+		 * @return this builder
+		 */
+		public Builder setClassLoaderFactory(ClassLoaderFactory classLoaderFactory) {
+			this.classLoaderFactory = classLoaderFactory;
+			return this;
+		}
+
+		/**
+		 * Enable code mobility
+		 * 
+		 * @param codeMobilityEnabled true if code mobility must be enabled, false
+		 *                            otherwise
+		 * @return this builder
+		 */
 		public Builder enableCodeMobility(boolean codeMobilityEnabled) {
-			if (codeMobilityEnabled && System.getProperty("java.vendor").matches(".*Android.*"))
-				throw new IllegalStateException("The RMI code mobility is not supported on this platform.");
+			// if (codeMobilityEnabled &&
+			// System.getProperty("java.vendor").matches(".*Android.*"))
+			// throw new IllegalStateException("The RMI code mobility is not supported on
+			// this platform.");
 			this.codeMobilityEnabled = codeMobilityEnabled;
 			return this;
 		}
@@ -382,7 +375,7 @@ public class RmiRegistry {
 		 */
 		public RmiRegistry build() {
 			RmiRegistry rmiRegistry = new RmiRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
-					authenticator, codeMobilityEnabled, codebases);
+					authenticator, codeMobilityEnabled, codebases, classLoaderFactory);
 
 			codebases = new HashSet<>();
 			return rmiRegistry;
@@ -407,13 +400,14 @@ public class RmiRegistry {
 	 *                                instance can be an adapter that access a
 	 *                                database or another pre-made authentication
 	 *                                system.
+	 * @param classLoaderFactory2
 	 * 
 	 * @see RmiRegistry.Builder
 	 * @see RmiRegistry#builder()
 	 */
 	private RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
 			ProtocolEndpointFactory protocolEndpointFactory, Authenticator authenticator, boolean codeMobilityEnabled,
-			Set<URL> codebases) {
+			Set<URL> codebases, ClassLoaderFactory classLoaderFactory) {
 		if (serverSocketFactory == null)
 			serverSocketFactory = ServerSocketFactory.getDefault();
 		if (socketFactory == null)
@@ -429,7 +423,83 @@ public class RmiRegistry {
 		this.protocolEndpointFactory = protocolEndpointFactory;
 		this.authenticator = authenticator;
 		this.codeMobilityEnabled = codeMobilityEnabled;
-		this.codebases = Collections.synchronizedSet(codebases);
+		this.classLoaderFactory = classLoaderFactory;
+		for (URL url : codebases) {
+			addCodebaseRef(url);
+		}
+	}
+
+	/**
+	 * Gets the class loader factory used by this registry to decode remote classes
+	 * when code mobility is enabled.
+	 * 
+	 * @return the {@link ClassLoaderFactory} used by this registry
+	 */
+	public ClassLoaderFactory getClassLoaderFactory() {
+		return classLoaderFactory;
+	}
+
+	/**
+	 * Gets the lease timeout after that the distributed garbage collection
+	 * mechanism will remove a non-named object from the registry.
+	 * 
+	 * @return the lease timeout value in milliseconds
+	 */
+	public int getDgcLeaseValue() {
+		return dgcLeaseValue;
+	}
+
+	/**
+	 * Sets the lease timeout after that the distributed garbage collection
+	 * mechanism will remove a non-named object from the registry.
+	 * 
+	 * @param dgcLeaseValue the lease timeout value in milliseconds
+	 */
+	public void setDgcLeaseValue(int dgcLeaseValue) {
+		this.dgcLeaseValue = dgcLeaseValue;
+	}
+
+	public Set<URL> getCodebases() {
+		return Collections.unmodifiableSet(codebasesRefs.keySet());
+	}
+
+	public boolean isCodeMobilityEnabled() {
+		return codeMobilityEnabled;
+	}
+
+	/**
+	 * Adds authentication details for a remote host
+	 * 
+	 * @param host           the remote host
+	 * @param port           the remote port
+	 * @param authId         the authentication identifier
+	 * @param authPassphrase the authentication pass-phrase
+	 */
+	public void setAuthentication(String host, int port, String authId, String authPassphrase) {
+		try {
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
+		}
+		String key = host + ":" + port;
+		String[] auth = new String[] { authId, authPassphrase };
+		authenticationMap.put(key, auth);
+	}
+
+	/**
+	 * Removes authentication details for a remote host
+	 * 
+	 * @param host the remote host
+	 * @param port the remote port
+	 */
+	public void removeAuthentication(String host, int port) {
+		try {
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
+		}
+		String key = host + ":" + port;
+		authenticationMap.remove(key);
 	}
 
 	/**
