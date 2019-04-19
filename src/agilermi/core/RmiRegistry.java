@@ -25,7 +25,6 @@ import java.net.Socket;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -47,6 +46,7 @@ import javax.net.SocketFactory;
 
 import agilermi.authentication.Authenticator;
 import agilermi.classloading.ClassLoaderFactory;
+import agilermi.classloading.URLClassLoaderFactory;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.FailureObserver;
@@ -88,7 +88,7 @@ public class RmiRegistry {
 	private Object lock = new Object();
 
 	// codebases for code mobility
-	private Map<URL, Integer> codebasesRefs = Collections.synchronizedMap(new HashMap<>());
+	RmiClassLoader rmiClassLoader;
 
 	private boolean codeMobilityEnabled = false;
 
@@ -176,24 +176,6 @@ public class RmiRegistry {
 
 	// authenticator objects that authenticates and authorize users
 	private Authenticator authenticator;
-
-	void addCodebaseRef(URL url) {
-		if (codebasesRefs.containsKey(url)) {
-			codebasesRefs.put(url, codebasesRefs.get(url) + 1);
-		} else {
-			codebasesRefs.put(url, 1);
-		}
-	}
-
-	void removeCodebaseRef(URL url) {
-		if (codebasesRefs.containsKey(url)) {
-			Integer refCount = codebasesRefs.get(url) - 1;
-			if (refCount > 0)
-				codebasesRefs.put(url, refCount);
-			else
-				codebasesRefs.remove(url);
-		}
-	}
 
 	/**
 	 * Package-level method to get authentication relative to a remote process.
@@ -423,10 +405,10 @@ public class RmiRegistry {
 		this.protocolEndpointFactory = protocolEndpointFactory;
 		this.authenticator = authenticator;
 		this.codeMobilityEnabled = codeMobilityEnabled;
+		if (classLoaderFactory == null)
+			classLoaderFactory = new URLClassLoaderFactory();
 		this.classLoaderFactory = classLoaderFactory;
-		for (URL url : codebases) {
-			addCodebaseRef(url);
-		}
+		this.rmiClassLoader = new RmiClassLoader(codebases, classLoaderFactory);
 	}
 
 	/**
@@ -460,7 +442,7 @@ public class RmiRegistry {
 	}
 
 	public Set<URL> getCodebases() {
-		return Collections.unmodifiableSet(codebasesRefs.keySet());
+		return rmiClassLoader.getCodebases();
 	}
 
 	public boolean isCodeMobilityEnabled() {
@@ -639,7 +621,7 @@ public class RmiRegistry {
 			throws UnknownHostException, IOException, InterruptedException {
 
 		RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
-		RemoteInterfaceHandle hnd = new RemoteInterfaceHandle(objectId);
+		RemoteInterfaceMessage hnd = new RemoteInterfaceMessage(objectId);
 		rmiHandler.putHandle(hnd);
 		hnd.semaphore.acquire();
 

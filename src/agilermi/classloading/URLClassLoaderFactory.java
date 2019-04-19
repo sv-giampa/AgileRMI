@@ -12,25 +12,9 @@ import java.net.URLClassLoader;
  *
  */
 public class URLClassLoaderFactory implements ClassLoaderFactory {
-	private ClassLoader parent;
-
-	/**
-	 * Construct an instance with the system class loader as parent (See
-	 * {@link ClassLoader#getSystemClassLoader()})
-	 */
-	public URLClassLoaderFactory() {
-		parent = ClassLoader.getSystemClassLoader();
-	}
-
-	/**
-	 * Construct an instance with the given parent.
-	 */
-	public URLClassLoaderFactory(ClassLoader parent) {
-		this.parent = parent;
-	}
 
 	@Override
-	public ClassLoader createClassLoader(URL url) {
+	public ClassLoader createClassLoader(URL url, ClassLoader parent) {
 		return URLClassLoader.newInstance(new URL[] { url }, parent);
 	}
 

@@ -155,7 +155,7 @@ class Skeleton {
 		Method met = object.getClass().getMethod(method, parameterTypes);
 
 		// set the method accessible
-		met.setAccessible(true);
+		// met.setAccessible(true);
 
 		return met.invoke(object, parameters);
 	}

@@ -51,7 +51,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		this.handler = rmiHandler;
 		this.registryKey = rmiHandler.getRmiRegistry().registryKey;
 		try {
-			handler.putHandle(new NewReferenceHandle(objectId));
+			handler.putHandle(new NewReferenceMessage(objectId));
 		} catch (InterruptedException e) {
 			e.printStackTrace();
 		}
@@ -87,7 +87,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		try {
-			handler.putHandle(new NewReferenceHandle(objectId));
+			handler.putHandle(new NewReferenceMessage(objectId));
 		} catch (Exception e) {
 
 		}
@@ -105,7 +105,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 
 		// create the invocation handle
-		InvocationHandle invocation = new InvocationHandle(objectId, method.getName(), method.getParameterTypes(),
+		InvocationMessage invocation = new InvocationMessage(objectId, method.getName(), method.getParameterTypes(),
 				args);
 
 		String methodName = method.getName();
@@ -188,7 +188,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	 */
 	@Override
 	protected void finalize() throws Throwable {
-		handler.putHandle(new FinalizeHandle(objectId));
+		handler.putHandle(new FinalizeMessage(objectId));
 		super.finalize();
 	}
 

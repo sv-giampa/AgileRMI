@@ -30,5 +30,5 @@ public interface ClassLoaderFactory {
 	 * @param url the URL of the codebase whose code must be loaded
 	 * @return a new {@link ClassLoader} instance
 	 */
-	public ClassLoader createClassLoader(URL url);
+	public ClassLoader createClassLoader(URL url, ClassLoader parent);
 }

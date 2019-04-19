@@ -31,14 +31,19 @@ import java.util.concurrent.Semaphore;
  * @author Salvatore Giampa'
  *
  */
-interface Handle extends Serializable {
-
+interface Message extends Serializable {
 }
 
-class CodebasesHandle implements Handle {
+/**
+ * Message used to update remote list of codebases
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
+class CodebasesMessage implements Message {
 	private static final long serialVersionUID = -7195041483720248013L;
 
-	Set<URL> codebases;
+	public Set<URL> codebases;
 }
 
 /**
@@ -47,7 +52,7 @@ class CodebasesHandle implements Handle {
  * @author Salvatore Giampa'
  *
  */
-class InvocationHandle implements Handle {
+class InvocationMessage implements Message {
 	private static final long serialVersionUID = 992296041709440752L;
 
 	private static long nextId = 0;
@@ -88,7 +93,7 @@ class InvocationHandle implements Handle {
 	 * @param parameterTypes parameter types of the remote method
 	 * @param parameters     actual parameters of the invocation
 	 */
-	public InvocationHandle(long id, String objectId, String method, Class<?>[] parameterTypes, Object[] parameters) {
+	public InvocationMessage(long id, String objectId, String method, Class<?>[] parameterTypes, Object[] parameters) {
 		this.id = id;
 		this.objectId = objectId;
 		this.method = method;
@@ -104,7 +109,7 @@ class InvocationHandle implements Handle {
 	 * @param parameterTypes parameter types of the remote method
 	 * @param parameters     actual parameters of the invocation
 	 */
-	public InvocationHandle(String objectId, String method, Class<?>[] parameterTypes, Object[] parameters) {
+	public InvocationMessage(String objectId, String method, Class<?>[] parameterTypes, Object[] parameters) {
 		id = nextId++;
 		this.objectId = objectId;
 		this.method = method;
@@ -115,22 +120,22 @@ class InvocationHandle implements Handle {
 
 /**
  * This class represents response messages to invocation requests. This class is
- * the counterpart of the {@link InvocationHandle} class
+ * the counterpart of the {@link InvocationMessage} class
  * 
  * @author Salvatore Giampa'
  *
  */
-class ReturnHandle implements Handle {
+class ReturnMessage implements Message {
 	private static final long serialVersionUID = 6674503222830749941L;
 	public long invocationId;
 	public Class<?> returnClass;
 	public Object returnValue;
 	public Throwable thrownException;
 
-	public ReturnHandle() {
+	public ReturnMessage() {
 	}
 
-	public ReturnHandle(long invocationId, Class<?> returnClass, Object returnValue, Throwable thrownException) {
+	public ReturnMessage(long invocationId, Class<?> returnClass, Object returnValue, Throwable thrownException) {
 		this.invocationId = invocationId;
 		this.returnClass = returnClass;
 		this.returnValue = returnValue;
@@ -145,7 +150,7 @@ class ReturnHandle implements Handle {
  * @author Salvatore Giampa'
  *
  */
-class RemoteInterfaceHandle implements Handle {
+class RemoteInterfaceMessage implements Message {
 
 	private static final long serialVersionUID = -4774302373023169775L;
 
@@ -159,12 +164,12 @@ class RemoteInterfaceHandle implements Handle {
 
 	public transient final Semaphore semaphore = new Semaphore(0);
 
-	public RemoteInterfaceHandle(String objectId) {
+	public RemoteInterfaceMessage(String objectId) {
 		this.handleId = nextId++;
 		this.objectId = objectId;
 	}
 
-	public RemoteInterfaceHandle(long handleId, String objectId) {
+	public RemoteInterfaceMessage(long handleId, String objectId) {
 		this.handleId = handleId;
 		this.objectId = objectId;
 	}
@@ -179,11 +184,11 @@ class RemoteInterfaceHandle implements Handle {
  * @author Salvatore Giampa'
  *
  */
-class NewReferenceHandle implements Handle {
+class NewReferenceMessage implements Message {
 	private static final long serialVersionUID = 8561515474575531127L;
 	public String objectId;
 
-	public NewReferenceHandle(String objectId) {
+	public NewReferenceMessage(String objectId) {
 		this.objectId = objectId;
 	}
 
@@ -197,17 +202,13 @@ class NewReferenceHandle implements Handle {
  * @author Salvatore Giampa'
  *
  */
-class FinalizeHandle implements Handle {
+class FinalizeMessage implements Message {
 	private static final long serialVersionUID = 6485937225497004801L;
 
 	public String objectId;
 
-	public FinalizeHandle(String objectId) {
+	public FinalizeMessage(String objectId) {
 		this.objectId = objectId;
 	}
 
-}
-
-class GracefulDisconnectHandle implements Handle {
-	private static final long serialVersionUID = -172006718701842237L;
 }

@@ -163,7 +163,7 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 		return obj;
 	}
 
-	private InvocationHandle remotize(InvocationHandle handle) throws UnknownHostException, IOException {
+	private InvocationMessage remotize(InvocationMessage handle) throws UnknownHostException, IOException {
 		if (handle.parameters == null)
 			return handle;
 		if (handle.parameters.length != handle.parameterTypes.length)
@@ -177,18 +177,18 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 			parameters[i] = remotize(parameters[i], handle.parameterTypes[i]);
 		}
 
-		InvocationHandle newHandle = new InvocationHandle(handle.id, handle.objectId, handle.method,
+		InvocationMessage newHandle = new InvocationMessage(handle.id, handle.objectId, handle.method,
 				handle.parameterTypes, parameters);
 		return newHandle;
 	}
 
-	private ReturnHandle remotize(ReturnHandle handle) throws UnknownHostException, IOException {
+	private ReturnMessage remotize(ReturnMessage handle) throws UnknownHostException, IOException {
 		if (handle.returnValue == null)
 			return handle;
 		if (handle.returnClass == null || !handle.returnClass.isInstance(handle.returnValue))
 			return handle;
 		Object returnValue = remotize(handle.returnValue, handle.returnClass);
-		ReturnHandle newHandle = new ReturnHandle(handle.invocationId, handle.returnClass, returnValue,
+		ReturnMessage newHandle = new ReturnMessage(handle.invocationId, handle.returnClass, returnValue,
 				handle.thrownException);
 		return newHandle;
 	}
@@ -213,10 +213,10 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 		if (obj instanceof String || obj instanceof Number || obj instanceof Boolean || obj instanceof Character)
 			return obj;
 
-		if (obj instanceof InvocationHandle)
-			return remotize((InvocationHandle) obj);
-		if (obj instanceof ReturnHandle)
-			return remotize((ReturnHandle) obj);
+		if (obj instanceof InvocationMessage)
+			return remotize((InvocationMessage) obj);
+		if (obj instanceof ReturnMessage)
+			return remotize((ReturnMessage) obj);
 
 		if (rootType != null) {
 			Object newObj = remotize(obj, rootType);

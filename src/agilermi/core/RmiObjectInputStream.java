@@ -24,6 +24,9 @@ import java.io.ObjectStreamClass;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
+import java.net.URL;
+import java.util.HashSet;
+import java.util.Set;
 
 import agilermi.classloading.ClassLoaderFactory;
 
@@ -43,15 +46,7 @@ class RmiObjectInputStream extends ObjectInputStream {
 	private int remotePort;
 	private RmiRegistry rmiRegistry;
 	private RmiClassLoader rmiClassLoader;
-//
-//	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, String remoteAddress, int remotePort)
-//			throws IOException {
-//		super(inputStream);
-//		this.rmiRegistry = rmiRegistry;
-//		this.remoteAddress = remoteAddress;
-//		this.remotePort = remotePort;
-//		this.enableResolveObject(true);
-//	}
+	private Set<URL> remoteCodebases = new HashSet<>();
 
 	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, InetSocketAddress address,
 			ClassLoaderFactory classLoaderFactory) throws IOException {
@@ -59,7 +54,7 @@ class RmiObjectInputStream extends ObjectInputStream {
 		this.rmiRegistry = rmiRegistry;
 		this.remoteAddress = address.getHostString();
 		this.remotePort = address.getPort();
-		this.rmiClassLoader = new RmiClassLoader(classLoaderFactory, rmiRegistry);
+		this.rmiClassLoader = rmiRegistry.rmiClassLoader;
 		this.enableResolveObject(true);
 	}
 
@@ -79,15 +74,37 @@ class RmiObjectInputStream extends ObjectInputStream {
 		return remotePort;
 	}
 
+	public synchronized void setRemoteCodebases(Set<URL> urls) {
+		remoteCodebases.retainAll(urls);
+		for (URL url : urls)
+			remoteCodebases.add(url);
+	}
+
 	@Override
-	protected Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
-		if (rmiClassLoader != null)
+	protected synchronized Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
+
+		try {
+			return super.resolveClass(desc);
+		} catch (Exception e) {
+		}
+
+		try {
+			return rmiClassLoader.findClass(desc.getName());
+		} catch (Exception e) {
+		}
+
+		for (URL codebase : remoteCodebases) {
 			try {
-				Class<?> cls = rmiClassLoader.loadClass(desc.getName());
-				// System.out.println("resolve class: " + desc.getName());
+				System.out.printf("Trying codebase %s to load class %s\n", codebase, desc.getName());
+				ClassLoader classLoader = new CodebaseClassLoader(rmiRegistry.getClassLoaderFactory(), codebase);
+				Class<?> cls = classLoader.loadClass(desc.getName());
+				rmiClassLoader.addActiveCodebase(codebase, classLoader);
 				return cls;
 			} catch (Exception e) {
+				System.out.printf("Codebase %s cannot be used to load class %s\n%s\n", codebase, desc.getName(),
+						e.toString());
 			}
+		}
 		return super.resolveClass(desc);
 	}
 
@@ -118,14 +135,9 @@ class RmiObjectInputStream extends ObjectInputStream {
 	}
 
 	@Override
-	public void close() throws IOException {
-		if (rmiClassLoader != null) {
-			rmiClassLoader.close();
-			rmiClassLoader = null;
-		}
+	protected void finalize() throws Throwable {
 		reset();
-		super.close();
-		System.gc();
+		super.finalize();
 	}
 
 }

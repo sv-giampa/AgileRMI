@@ -1,82 +1,82 @@
 package agilermi.core;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.net.URL;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 import agilermi.classloading.ClassLoaderFactory;
-import agilermi.classloading.URLClassLoaderFactory;
 
-public class RmiClassLoader extends ClassLoader implements Closeable {
-	private Map<URL, ClassLoader> urlLoaders = new HashMap<>();
-	private Map<URL, Boolean> codebaseRefAdded = new HashMap<>();
-	private ClassLoaderFactory classLoaderFactory;
-	private RmiRegistry rmiRegistry;
-	private boolean closed = false;
+/**
+ * The instance of this class associated to a {@link RmiRegistry} can be used to
+ * load classes located on remote codebases.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
+public final class RmiClassLoader extends ClassLoader {
+	private int modificationNumber = 0;
+	private ClassLoader[] staticCodebases;
+	private WeakHashMap<ClassLoader, URL> activeCodebases = new WeakHashMap<>();
 
-	public RmiClassLoader(ClassLoaderFactory classLoaderFactory, RmiRegistry rmiRegistry) {
+	RmiClassLoader(Set<URL> staticCodebases, ClassLoaderFactory classLoaderFactory) {
 		super(ClassLoader.getSystemClassLoader());
-		this.rmiRegistry = rmiRegistry;
-		if (classLoaderFactory != null)
-			this.classLoaderFactory = classLoaderFactory;
-		else
-			this.classLoaderFactory = new URLClassLoaderFactory();
+		this.staticCodebases = new ClassLoader[staticCodebases.size()];
+		int index = 0;
+		for (URL codebase : staticCodebases) {
+			this.staticCodebases[index] = classLoaderFactory.createClassLoader(codebase,
+					ClassLoader.getSystemClassLoader());
+			this.activeCodebases.put(this.staticCodebases[index], codebase);
+			index++;
+		}
+		modificationNumber++;
 	}
 
-	public synchronized void addURL(URL url) {
-		if (urlLoaders.containsKey(url))
-			return;
-		ClassLoader urlLoader = classLoaderFactory.createClassLoader(url);
-		urlLoaders.put(url, urlLoader);
-		codebaseRefAdded.put(url, false);
+	/**
+	 * Called by the {@link RmiObjectInputStream} when a new class loader is
+	 * activated for a remote codebase.
+	 * 
+	 * @param url         the codebase url
+	 * @param classLoader the codebase class loader
+	 */
+	synchronized void addActiveCodebase(URL url, ClassLoader classLoader) {
+		activeCodebases.put(classLoader, url);
+		modificationNumber++;
 	}
 
-	public synchronized Set<URL> getURLs() {
-		return Collections.unmodifiableSet(urlLoaders.keySet());
+	/**
+	 * Gets the modification number that is incremented every time a new change to
+	 * the codebase set is done on this {@link RmiClassLoader}. This method is used
+	 * by {@link RmiHandler} to decide when the set of the local active codebases
+	 * should be sent to the remote peer.
+	 * 
+	 * @return the number of modifications apported to this class loader
+	 */
+	int getModificationNumber() {
+		return modificationNumber;
 	}
 
 	@Override
-	public Class<?> findClass(String name) throws ClassNotFoundException {
-		for (URL url : urlLoaders.keySet()) {
-			ClassLoader urlLoader = urlLoaders.get(url);
+	protected synchronized Class<?> findClass(String name) throws ClassNotFoundException {
+		try {
+			return ClassLoader.getSystemClassLoader().loadClass(name);
+		} catch (ClassNotFoundException e) {
+		}
+		for (ClassLoader classLoader : activeCodebases.keySet()) {
 			try {
-				Class<?> cls = urlLoader.loadClass(name);
-				if (!codebaseRefAdded.get(url)) {
-					rmiRegistry.addCodebaseRef(url);
-					codebaseRefAdded.put(url, true);
-				}
-				return cls;
+				return classLoader.loadClass(name);
 			} catch (ClassNotFoundException e) {
 			}
 		}
 		throw new ClassNotFoundException();
 	}
 
-	@Override
-	protected void finalize() throws Throwable {
-		close();
-		for (URL url : urlLoaders.keySet()) {
-			if (codebaseRefAdded.get(url))
-				rmiRegistry.removeCodebaseRef(url);
-		}
-		super.finalize();
-	}
-
-	@Override
-	public void close() {
-		if (closed)
-			return;
-		for (ClassLoader urlLoader : urlLoaders.values()) {
-			try {
-				if (urlLoader instanceof Closeable)
-					((Closeable) urlLoader).close();
-			} catch (IOException e) {
-			}
-		}
-		closed = true;
+	/**
+	 * Gets the set of currently active codebases.
+	 * 
+	 * @return a set of active codebases
+	 */
+	public synchronized Set<URL> getCodebases() {
+		return new HashSet<>(activeCodebases.values());
 	}
 }
