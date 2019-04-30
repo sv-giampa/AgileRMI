@@ -14,16 +14,24 @@
  *  limitations under the License.
  *  
  **/
+package agilermi.codemobility;
 
-package agilermi.exception;
+import java.net.URL;
+import java.net.URLClassLoader;
 
-import java.io.IOException;
+/**
+ * This class is the default implementation of the {@link ClassLoaderFactory}
+ * interface that creates {@link URLClassLoader} instances that are fully
+ * supported on standard Java Virtual Machines.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
+public final class URLClassLoaderFactory implements ClassLoaderFactory {
 
-public class RemoteAuthenticationException extends IOException {
-
-	private static final long serialVersionUID = 5828990096774080908L;
-
-	public RemoteAuthenticationException() {
-		super("the local user cannot be authenticated on the remote machine");
+	@Override
+	public ClassLoader createClassLoader(URL url, ClassLoader parent) {
+		return URLClassLoader.newInstance(new URL[] { url }, parent);
 	}
+
 }

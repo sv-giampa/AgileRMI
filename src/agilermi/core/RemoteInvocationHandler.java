@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		out.defaultWriteObject();
 		InetSocketAddress address = handler.getInetSocketAddress();
 		out.writeUTF(address.getHostString());
-		out.writeInt(address.getPort());
+		out.writeInt(handler.getInetSocketAddress().getPort());
 	}
 
 	private void readObject(ObjectInputStream in)
@@ -77,9 +77,9 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		int port = in.readInt();
 
 		if (in instanceof RmiObjectInputStream) {
-			RmiObjectInputStream cois = (RmiObjectInputStream) in;
+			RmiObjectInputStream rmiInput = (RmiObjectInputStream) in;
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
-				host = cois.getRemoteAddress();
+				host = rmiInput.getRemoteAddress();
 			RmiRegistry rmiRegistry = ((RmiObjectInputStream) in).getRmiRegistry();
 			handler = rmiRegistry.getRmiHandler(host, port, rmiRegistry.isMultiConnectionMode());
 		} else {
@@ -117,8 +117,15 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			return hashCode;
 		}
 
+		if (methodName.equals("toString")) {
+			return "Proxy:" + objectId + "@" + handler.getInetSocketAddress().getHostName() + ":"
+					+ handler.getInetSocketAddress().getPort();
+		}
+
 		// verify alias in the equals() method
 		if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class) {
+			if (args[0] == proxy)
+				return true;
 			if (Proxy.isProxyClass(args[0].getClass())) {
 				InvocationHandler ih = Proxy.getInvocationHandler(args[0]);
 				if (ih instanceof RemoteInvocationHandler) {
@@ -127,8 +134,9 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 					int port = sih.handler.getInetSocketAddress().getPort();
 
 					if (sih.objectId.equals(objectId) && host.equals(handler.getInetSocketAddress().getHostString())
-							&& port == handler.getInetSocketAddress().getPort())
-						return true;
+							&& port == handler.getInetSocketAddress().getPort()) {
+						return Boolean.valueOf(true);
+					}
 				}
 			}
 		}
@@ -141,11 +149,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			}
 
 			if (handler.isDisposed()) {
+				if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class)
+					return Boolean.valueOf(false);
 				if (handler.getRmiRegistry().isRemoteExceptionEnabled())
 					throw new RemoteException();
 			} else {
 
-				invocation.semaphone.acquire();
+				invocation.awaitResult();
 
 				if (invocation.thrownException != null) {
 					invocation.thrownException.fillInStackTrace();

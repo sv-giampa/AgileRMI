@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,10 +17,9 @@
 
 package agilermi.core;
 
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
+import java.lang.reflect.Modifier;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -39,7 +38,7 @@ import agilermi.configuration.Unreferenced;
  * @author Salvatore Giampa'
  *
  */
-class Skeleton {
+final class Skeleton {
 	public static String IDENTIFIER_PREFIX = "###";
 	private static long nextId = 0;
 
@@ -54,6 +53,7 @@ class Skeleton {
 		id = IDENTIFIER_PREFIX + (nextId++);
 		this.object = object;
 		this.rmiRegistry = rmiRegistry;
+		scheduleRemoval();
 	}
 
 	int getRefGlobalCounter() {
@@ -67,8 +67,10 @@ class Skeleton {
 		count = count - 1;
 		refCounters.put(rmiHandler, count);
 		refGlobalCounter--;
-
-		scheduleRemove();
+		if (RmiRegistry.DEBUG)
+			System.out.printf("[Distributed GC] removed remote reference shared with '%s'\n\t(Object=%s; Class=%s)\n",
+					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+		scheduleRemoval();
 	}
 
 	synchronized void addRef(RmiHandler rmiHandler) {
@@ -80,20 +82,33 @@ class Skeleton {
 			refCounters.put(rmiHandler, count);
 		}
 		refGlobalCounter++;
+		if (RmiRegistry.DEBUG)
+			System.out.printf("[Distributed GC] added remote reference shared with '%s'\n\t(Object=%s; Class=%s)\n",
+					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
 	}
 
 	synchronized void removeAllRefs(RmiHandler rmiHandler) {
 		Integer count = refCounters.remove(rmiHandler);
 		refGlobalCounter -= count;
-		scheduleRemove();
+		if (RmiRegistry.DEBUG)
+			System.out.printf(
+					"[Distributed GC] removed all remote references shared with '%s'\n\t(Object=%s; Class=%s)\n",
+					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+		scheduleRemoval();
 	}
 
 	private Thread scheduledRemove = null;
 
-	private synchronized void scheduleRemove() {
+	private synchronized void scheduleRemoval() {
+		if (RmiRegistry.DEBUG)
+			System.out.printf("[Distributed GC] trying to schedule removal\n\t(Object=%s; Class=%s)\n", object,
+					object.getClass().getName());
 		if (refGlobalCounter == 0 && names.isEmpty()) {
 			if (scheduledRemove != null)
 				scheduledRemove.interrupt();
+			if (RmiRegistry.DEBUG)
+				System.out.printf("[Distributed GC] scheduling removal\n\t(Object=%s; Class=%s)\n", object,
+						object.getClass().getName());
 
 			// schedule the skeleton remove operation to be executed afte 10 seconds, to
 			// avoid errors caused by network latecies (e.g. when a machine pass a remote
@@ -110,11 +125,18 @@ class Skeleton {
 					if (refGlobalCounter == 0 && names.isEmpty()) {
 						if (object instanceof Unreferenced)
 							((Unreferenced) object).unreferenced();
+
+						if (RmiRegistry.DEBUG)
+							System.out.printf("[Distributed GC] removed from registry\n\t(Object=%s; Class=%s)\n",
+									object, object.getClass().getName());
 						rmiRegistry.unpublish(object);
 					}
 				}
 			});
 			scheduledRemove.start();
+			if (RmiRegistry.DEBUG)
+				System.out.printf("[Distributed GC] removal scheduled at %d ms\n\t(Object=%s; Class=%s)\n",
+						rmiRegistry.getDgcLeaseValue(), object, object.getClass().getName());
 		}
 	}
 
@@ -141,21 +163,15 @@ class Skeleton {
 	Object invoke(String method, Class<?>[] parameterTypes, Object[] parameters) throws IllegalAccessException,
 			IllegalArgumentException, InvocationTargetException, NoSuchMethodException, SecurityException {
 
-		if (method.equals("equals") && parameters.length == 1 && Proxy.isProxyClass(parameters[0].getClass())) {
-			InvocationHandler ih = Proxy.getInvocationHandler(parameters[0]);
-			if (ih instanceof RemoteInvocationHandler) {
-				RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
-				if (this.id.equals(rih.getObjectId()))
-					return true;
-				if (names.contains(rih.getObjectId()))
-					return true;
-			}
-		}
-
 		Method met = object.getClass().getMethod(method, parameterTypes);
 
-		// set the method accessible
-		// met.setAccessible(true);
+		if (Modifier.isPrivate(met.getModifiers()))
+			throw new IllegalAccessException("This method is private. It must not be accessed over RMI.");
+		if (Modifier.isStatic(met.getModifiers()))
+			throw new IllegalAccessException("This method is static. It must not be accessed over RMI.");
+
+		// set the method accessible (it becomes accessible by the library)
+		met.setAccessible(true);
 
 		return met.invoke(object, parameters);
 	}

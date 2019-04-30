@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import java.net.URL;
 import java.util.HashSet;
 import java.util.Set;
 
-import agilermi.classloading.ClassLoaderFactory;
+import agilermi.codemobility.ClassLoaderFactory;
 
 /**
  * This class extends the standard {@link ObjectInputStream} and it gives an RMI
@@ -41,7 +41,7 @@ import agilermi.classloading.ClassLoaderFactory;
  * @author Salvatore Giampa'
  *
  */
-class RmiObjectInputStream extends ObjectInputStream {
+final class RmiObjectInputStream extends ObjectInputStream {
 	private String remoteAddress;
 	private int remotePort;
 	private RmiRegistry rmiRegistry;
@@ -54,7 +54,7 @@ class RmiObjectInputStream extends ObjectInputStream {
 		this.rmiRegistry = rmiRegistry;
 		this.remoteAddress = address.getHostString();
 		this.remotePort = address.getPort();
-		this.rmiClassLoader = rmiRegistry.rmiClassLoader;
+		this.rmiClassLoader = rmiRegistry.getRmiClassLoader();
 		this.enableResolveObject(true);
 	}
 
@@ -75,6 +75,7 @@ class RmiObjectInputStream extends ObjectInputStream {
 	}
 
 	public synchronized void setRemoteCodebases(Set<URL> urls) {
+		System.gc(); // try to garbage collect old classes and codebases
 		remoteCodebases.retainAll(urls);
 		for (URL url : urls)
 			remoteCodebases.add(url);
@@ -95,14 +96,16 @@ class RmiObjectInputStream extends ObjectInputStream {
 
 		for (URL codebase : remoteCodebases) {
 			try {
-				System.out.printf("Trying codebase %s to load class %s\n", codebase, desc.getName());
-				ClassLoader classLoader = new CodebaseClassLoader(rmiRegistry.getClassLoaderFactory(), codebase);
+				// System.out.printf("Trying codebase %s to load class %s\n", codebase,
+				// desc.getName());
+				ClassLoader classLoader = new WrapperClassLoader(rmiRegistry.getClassLoaderFactory(), codebase);
 				Class<?> cls = classLoader.loadClass(desc.getName());
 				rmiClassLoader.addActiveCodebase(codebase, classLoader);
 				return cls;
 			} catch (Exception e) {
-				System.out.printf("Codebase %s cannot be used to load class %s\n%s\n", codebase, desc.getName(),
-						e.toString());
+				// System.out.printf("Codebase %s cannot be used to load class %s\n%s\n",
+				// codebase, desc.getName(),
+				// e.toString());
 			}
 		}
 		return super.resolveClass(desc);

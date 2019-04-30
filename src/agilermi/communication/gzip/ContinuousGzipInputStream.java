@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.

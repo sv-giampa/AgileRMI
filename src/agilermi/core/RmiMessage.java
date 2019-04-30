@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,8 +17,12 @@
 
 package agilermi.core;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
 import java.io.Serializable;
 import java.net.URL;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 
@@ -31,7 +35,7 @@ import java.util.concurrent.Semaphore;
  * @author Salvatore Giampa'
  *
  */
-interface Message extends Serializable {
+interface RmiMessage extends Serializable {
 }
 
 /**
@@ -40,10 +44,28 @@ interface Message extends Serializable {
  * @author Salvatore Giampa'
  *
  */
-class CodebasesMessage implements Message {
+class CodebaseUpdateMessage implements RmiMessage {
 	private static final long serialVersionUID = -7195041483720248013L;
-
 	public Set<URL> codebases;
+
+	private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
+		input.defaultReadObject();
+		if (input instanceof RmiObjectInputStream) {
+			RmiObjectInputStream rmiInput = (RmiObjectInputStream) input;
+			String remoteAddress = rmiInput.getRemoteAddress();
+			Set<URL> replaced = new HashSet<>();
+			Iterator<URL> it = codebases.iterator();
+			while (it.hasNext()) {
+				URL url = it.next();
+				String strUrl = url.toString();
+				strUrl = strUrl.replaceAll("//localhost", "//" + remoteAddress);
+				strUrl = strUrl.replaceAll("//127\\.0\\.0\\.1", "//" + remoteAddress);
+				it.remove();
+				replaced.add(new URL(strUrl));
+			}
+			codebases.addAll(replaced);
+		}
+	}
 }
 
 /**
@@ -52,14 +74,14 @@ class CodebasesMessage implements Message {
  * @author Salvatore Giampa'
  *
  */
-class InvocationMessage implements Message {
+class InvocationMessage implements RmiMessage {
 	private static final long serialVersionUID = 992296041709440752L;
 
 	private static long nextId = 0;
 
 	// invocation identifier, re-sent back in the related invocation response,
 	// represented by a ReturnHandle instance
-	public long id;
+	public final long id;
 
 	// identifier of the remote object
 	public String objectId;
@@ -81,8 +103,6 @@ class InvocationMessage implements Message {
 
 	// wait condition for the RemoteInvocationHandler that requested this invocation
 	public transient boolean returned = false;
-
-	public transient Semaphore semaphone = new Semaphore(0);
 
 	/**
 	 * Builds an invocation handle with the given invocation identifier
@@ -116,6 +136,30 @@ class InvocationMessage implements Message {
 		this.parameterTypes = parameterTypes;
 		this.parameters = parameters;
 	}
+
+	private transient Semaphore semaphone = new Semaphore(0);
+
+	/**
+	 * Waits the result of the remote invocation. After the execution of this
+	 * blocking operation, the {@link #returnValue} and the {@link #returnClass}
+	 * fields will contain the returned object and its class, respectively.
+	 */
+	public void awaitResult() {
+		try {
+			semaphone.acquire();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Signals the reception of the invocation result. This method should be called
+	 * after the set up of the {@link #returnValue} and the {@link #returnClass}
+	 * fields.
+	 */
+	public void signalResult() {
+		semaphone.release();
+	}
 }
 
 /**
@@ -125,7 +169,7 @@ class InvocationMessage implements Message {
  * @author Salvatore Giampa'
  *
  */
-class ReturnMessage implements Message {
+class ReturnMessage implements RmiMessage {
 	private static final long serialVersionUID = 6674503222830749941L;
 	public long invocationId;
 	public Class<?> returnClass;
@@ -150,7 +194,7 @@ class ReturnMessage implements Message {
  * @author Salvatore Giampa'
  *
  */
-class RemoteInterfaceMessage implements Message {
+class RemoteInterfaceMessage implements RmiMessage {
 
 	private static final long serialVersionUID = -4774302373023169775L;
 
@@ -162,8 +206,6 @@ class RemoteInterfaceMessage implements Message {
 
 	public Class<?>[] interfaces;
 
-	public transient final Semaphore semaphore = new Semaphore(0);
-
 	public RemoteInterfaceMessage(String objectId) {
 		this.handleId = nextId++;
 		this.objectId = objectId;
@@ -172,6 +214,26 @@ class RemoteInterfaceMessage implements Message {
 	public RemoteInterfaceMessage(long handleId, String objectId) {
 		this.handleId = handleId;
 		this.objectId = objectId;
+	}
+
+	private transient Semaphore semaphone = new Semaphore(0);
+
+	/**
+	 * Await for result
+	 */
+	public void awaitResult() {
+		try {
+			semaphone.acquire();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Signal the reception of the result
+	 */
+	public void signalResult() {
+		semaphone.release();
 	}
 
 }
@@ -184,7 +246,7 @@ class RemoteInterfaceMessage implements Message {
  * @author Salvatore Giampa'
  *
  */
-class NewReferenceMessage implements Message {
+class NewReferenceMessage implements RmiMessage {
 	private static final long serialVersionUID = 8561515474575531127L;
 	public String objectId;
 
@@ -202,7 +264,7 @@ class NewReferenceMessage implements Message {
  * @author Salvatore Giampa'
  *
  */
-class FinalizeMessage implements Message {
+class FinalizeMessage implements RmiMessage {
 	private static final long serialVersionUID = 6485937225497004801L;
 
 	public String objectId;

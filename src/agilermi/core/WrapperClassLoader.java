@@ -14,45 +14,34 @@
  *  limitations under the License.
  *  
  **/
-package agilermi.remote.stream;
 
-import java.io.IOException;
-import java.io.OutputStream;
+package agilermi.core;
 
-public class ByteOuputAdapter implements ByteOutput {
+import java.io.Closeable;
+import java.net.URL;
 
-	private OutputStream outputStream;
+import agilermi.codemobility.ClassLoaderFactory;
 
-	public ByteOuputAdapter(OutputStream outputStream) {
-		if (outputStream == null)
-			throw new NullPointerException("outputStream is null");
-		this.outputStream = outputStream;
+final class WrapperClassLoader extends ClassLoader {
+	private ClassLoader classLoader;
+	private URL url;
+
+	public WrapperClassLoader(ClassLoaderFactory classLoaderFactory, URL url) {
+		classLoader = classLoaderFactory.createClassLoader(url, ClassLoader.getSystemClassLoader());
+		this.url = url;
 	}
 
 	@Override
-	public void close() throws IOException {
-		outputStream.close();
-	}
-
-	@Override
-	public void flush() throws IOException {
-		outputStream.flush();
-	}
-
-	@Override
-	public void write(int b) throws IOException {
-		outputStream.write(b);
-	}
-
-	@Override
-	public void write(byte[] bytes) throws IOException {
-		outputStream.write(bytes);
+	protected Class<?> findClass(String name) throws ClassNotFoundException {
+		return classLoader.loadClass(name);
 	}
 
 	@Override
 	protected void finalize() throws Throwable {
-		outputStream.close();
+		if (RmiRegistry.DEBUG)
+			System.out.println("[WrapperClassLoader.finalize()] class loader finalized: " + url);
+		if (classLoader instanceof Closeable)
+			((Closeable) classLoader).close();
 		super.finalize();
 	}
-
 }

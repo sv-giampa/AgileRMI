@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,8 +45,8 @@ import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 
 import agilermi.authentication.Authenticator;
-import agilermi.classloading.ClassLoaderFactory;
-import agilermi.classloading.URLClassLoaderFactory;
+import agilermi.codemobility.ClassLoaderFactory;
+import agilermi.codemobility.URLClassLoaderFactory;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.FailureObserver;
@@ -68,7 +68,9 @@ import agilermi.exception.RemoteException;
  * @author Salvatore Giampa'
  *
  */
-public class RmiRegistry {
+public final class RmiRegistry {
+
+	static final boolean DEBUG = false;
 
 	private ExecutorService executorService = Executors.newFixedThreadPool(1, new ThreadFactory() {
 		@Override
@@ -445,8 +447,59 @@ public class RmiRegistry {
 		return rmiClassLoader.getCodebases();
 	}
 
+	public void addCodebases(Iterable<URL> urls) {
+		if (urls == null)
+			return;
+		for (URL url : urls)
+			rmiClassLoader.addCodebase(url);
+	}
+
+	public void addCodebases(URL[] urls) {
+		if (urls == null)
+			return;
+		for (URL url : urls)
+			rmiClassLoader.addCodebase(url);
+	}
+
+	public void addCodebase(URL url) {
+		if (url == null)
+			return;
+		rmiClassLoader.addCodebase(url);
+	}
+
+	public void removeCodebase(URL url) {
+		rmiClassLoader.removeCodebase(url);
+	}
+
+	/**
+	 * Returns the {@link RmiClassLoader} instance used to load classes from remote
+	 * codebase. This instance can be used to load specific classes that are not in
+	 * the current classpath.
+	 * 
+	 * @return the {@link RmiClassLoader} instance used by this registry
+	 */
+	public RmiClassLoader getRmiClassLoader() {
+		return rmiClassLoader;
+	}
+
+	/**
+	 * Gets the code mobility enable flag
+	 * 
+	 * @return true if this registry accepts code from remote codebases, false
+	 *         otherwise
+	 */
 	public boolean isCodeMobilityEnabled() {
 		return codeMobilityEnabled;
+	}
+
+	/**
+	 * Set the code mobility enable flag.
+	 * 
+	 * @param codeMobilityEnabled if true, this registry will accept code from
+	 *                            remote codebases. Set it to false otherwise.
+	 */
+	public void setCodeMobilityEnabled(boolean codeMobilityEnabled) {
+		this.codeMobilityEnabled = codeMobilityEnabled;
 	}
 
 	/**
@@ -551,8 +604,7 @@ public class RmiRegistry {
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
 	 */
-	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces)
-			throws UnknownHostException, IOException {
+	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces) throws IOException {
 		synchronized (lock) {
 			return getRmiHandler(address, port, multiConnectionMode).getStub(objectId, stubInterfaces);
 		}
@@ -577,7 +629,7 @@ public class RmiRegistry {
 	 * @throws IOException          if I/O errors occur
 	 */
 	public Object getStub(String address, int port, String objectId, boolean newConnection, Class<?>... stubInterfaces)
-			throws UnknownHostException, IOException {
+			throws IOException {
 		synchronized (lock) {
 			return getRmiHandler(address, port, newConnection).getStub(objectId, stubInterfaces);
 		}
@@ -621,11 +673,11 @@ public class RmiRegistry {
 			throws UnknownHostException, IOException, InterruptedException {
 
 		RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
-		RemoteInterfaceMessage hnd = new RemoteInterfaceMessage(objectId);
-		rmiHandler.putHandle(hnd);
-		hnd.semaphore.acquire();
+		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
+		rmiHandler.putHandle(msg);
+		msg.awaitResult();
 
-		return rmiHandler.getStub(objectId, hnd.interfaces);
+		return rmiHandler.getStub(objectId, msg.interfaces);
 	}
 
 	/**
@@ -678,7 +730,7 @@ public class RmiRegistry {
 		} catch (InterruptedException e) {
 			return null;
 		} catch (ExecutionException e) {
-			throw (IOException) e.getCause();
+			throw (IOException) e.getCause().fillInStackTrace();
 		}
 	}
 
@@ -703,7 +755,7 @@ public class RmiRegistry {
 		} catch (InterruptedException e) {
 			return;
 		} catch (ExecutionException e) {
-			throw (IOException) e.getCause();
+			throw (IOException) e.getCause().fillInStackTrace();
 		}
 	}
 
@@ -755,6 +807,7 @@ public class RmiRegistry {
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
+				listenerPort = 0;
 			}
 			return null;
 		};
@@ -987,10 +1040,11 @@ public class RmiRegistry {
 	}
 
 	/**
-	 * Check if an interface is marked for automatic referencing. An interface is
-	 * remote if it, directly or indirectly, extends the {@link Remote} interface or
-	 * if it was exported or if it extends, directly or indirectly, an interface
-	 * that was exported to be remote.<br>
+	 * Check if a class is marked for automatic referencing. A concrete or abstract
+	 * class is never remote. An interface is remote if it, directly or indirectly,
+	 * extends the {@link Remote} interface or if it was exported or if it extends,
+	 * directly or indirectly, an interface that was exported on this registry to be
+	 * remote.<br>
 	 * See the {@link RmiRegistry#exportInterface(Class)} method.
 	 * 
 	 * @param remoteIf the interface to check
@@ -998,8 +1052,10 @@ public class RmiRegistry {
 	 *         otherwise
 	 */
 	public boolean isRemote(Class<?> remoteIf) {
-		if (remoteIf == Remote.class)
+		if (!remoteIf.isInterface() || remoteIf == Remote.class)
 			return false;
+
+		// is it statically marked as remote?
 		if (Remote.class.isAssignableFrom(remoteIf))
 			return true;
 

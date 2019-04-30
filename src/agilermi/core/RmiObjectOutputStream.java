@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import java.io.WriteAbortedException;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
@@ -44,7 +45,7 @@ import agilermi.configuration.Remote;
  * @author Salvatore Giampa'
  *
  */
-class RmiObjectOutputStream extends ObjectOutputStream {
+final class RmiObjectOutputStream extends ObjectOutputStream {
 	private RmiRegistry rmiRegistry;
 	private Class<?> rootType = null;
 
@@ -129,18 +130,22 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 
 			try {
 				Constructor<?> defaultConstructor = objClass.getConstructor();
+				boolean accessible = defaultConstructor.isAccessible();
 				defaultConstructor.setAccessible(true);
 				Object newObj = defaultConstructor.newInstance();
+				defaultConstructor.setAccessible(accessible);
 
 				Field[] fields = objClass.getDeclaredFields();
 
 				for (Field field : fields) {
 					int modifiers = field.getModifiers();
 					if (!Modifier.isStatic(modifiers) && !Modifier.isTransient(modifiers)) {
+						accessible = field.isAccessible();
 						field.setAccessible(true);
 						Object value = field.get(obj);
 						value = remotize(value, field.getType());
 						field.set(newObj, value);
+						field.setAccessible(accessible);
 					}
 				}
 				return newObj;
@@ -172,9 +177,9 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 		System.arraycopy(handle.parameters, 0, parameters, 0, parameters.length);
 
 		for (int i = 0; i < parameters.length; i++) {
-			if (handle.parameterTypes[i] == null || !handle.parameterTypes[i].isInstance(parameters[i]))
-				return handle;
-			parameters[i] = remotize(parameters[i], handle.parameterTypes[i]);
+			if (handle.parameterTypes[i] == null || !handle.parameterTypes[i].isInstance(handle.parameters[i]))
+				continue;
+			parameters[i] = remotize(handle.parameters[i], handle.parameterTypes[i]);
 		}
 
 		InvocationMessage newHandle = new InvocationMessage(handle.id, handle.objectId, handle.method,
@@ -194,8 +199,26 @@ class RmiObjectOutputStream extends ObjectOutputStream {
 	}
 
 	private Object remotize(Object obj, Class<?> formalType) throws UnknownHostException, IOException {
-		if (obj != null && (rmiRegistry.isRemote(formalType) || (obj instanceof Remote && formalType.isInterface())
+		// if necesseray routes the stub connection (if the remote machine of the
+		// sending stub have not an active RMI listener on its RmiRegistry)
+		boolean isStub = false;
+		boolean isShareableStub = false;
+		if (obj != null && obj instanceof Proxy) {
+			InvocationHandler ih = Proxy.getInvocationHandler(obj);
+			if (ih instanceof RemoteInvocationHandler) {
+				RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
+				isStub = true;
+				isShareableStub = rih.getHandler().areStubsShareable();
+			}
+		}
+
+		if (obj != null && (isStub && !isShareableStub || rmiRegistry.isRemote(formalType)
+				|| (obj instanceof Remote && formalType.isInterface())
 				|| (rmiRegistry.getRemoteObjectId(obj) != null && formalType.isInterface()))) {
+
+			if (RmiRegistry.DEBUG)
+				System.out.printf("[RmiObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
+						formalType.getName());
 
 			String objectId = rmiRegistry.publish(obj);
 

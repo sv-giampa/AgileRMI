@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import agilermi.core.RmiHandler;
  * @author Salvatore Giampa'
  *
  */
-public class RemoteException extends RuntimeException {
+public class RemoteException extends Exception {
 	private static final long serialVersionUID = 3064594603835597427L;
 
 	public RemoteException() {

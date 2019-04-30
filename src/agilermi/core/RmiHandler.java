@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 
 package agilermi.core;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.NotSerializableException;
@@ -58,10 +60,11 @@ import agilermi.exception.RemoteException;
  * @author Salvatore Giampa'
  *
  */
-public class RmiHandler {
+public final class RmiHandler {
 
 	// connection details, socket and streams
 	private InetSocketAddress inetSocketAddress;
+	private int remotePort;
 	private Socket socket;
 	private RmiObjectOutputStream outputStream;
 	private RmiObjectInputStream inputStream;
@@ -72,10 +75,14 @@ public class RmiHandler {
 	// Map for invocations that are waiting a response
 	private Map<Long, InvocationMessage> invocations = Collections.synchronizedMap(new HashMap<>());
 
+	// Map for interface requests that are waiting a response
 	private Map<Long, RemoteInterfaceMessage> interfaceRequests = Collections.synchronizedMap(new HashMap<>());
 
+	// Map for codebases update requests that are waiting a response
+	private Map<Long, CodebaseUpdateMessage> codebasesUpdateRequests = Collections.synchronizedMap(new HashMap<>());
+
 	// The queue for buffered invocations that are ready to be sent over the socket
-	private BlockingQueue<Message> messageQueue = new ArrayBlockingQueue<>(200);
+	private BlockingQueue<RmiMessage> messageQueue = new ArrayBlockingQueue<>(200);
 
 	// Flag that indicates if this RmiHandler has been disposed.
 	private boolean disposed = false;
@@ -96,7 +103,9 @@ public class RmiHandler {
 
 	private ProtocolEndpoint protocolEndpoint;
 
-	private int codebasesMdification;
+	private int codebasesModification;
+
+	private String remoteRegistryKey;
 
 	/**
 	 * Gets the address of the remote process (IP address + TCP port)
@@ -123,7 +132,7 @@ public class RmiHandler {
 
 		disposed = true;
 		receiver.interrupt();
-		sender.interrupt();
+		transmitter.interrupt();
 
 		try {
 			socket.close();
@@ -149,9 +158,9 @@ public class RmiHandler {
 		}
 
 		// release all the handle in the handleQueue
-		for (Message message : messageQueue) {
-			if (message instanceof InvocationMessage) {
-				forceInvocationReturn((InvocationMessage) message);
+		for (RmiMessage rmiMessage : messageQueue) {
+			if (rmiMessage instanceof InvocationMessage) {
+				forceInvocationReturn((InvocationMessage) rmiMessage);
 			}
 		}
 
@@ -185,12 +194,12 @@ public class RmiHandler {
 	/**
 	 * Check if the given object is a stub created by this handler
 	 * 
-	 * @param obj the object to check
+	 * @param stub the object to check
 	 * @return true if the object is a stub created by this handler, false otherwise
 	 */
-	public boolean isMyStub(Object obj) {
-		if (Proxy.isProxyClass(obj.getClass())) {
-			InvocationHandler ih = Proxy.getInvocationHandler(obj);
+	public boolean isOwnStub(Object stub) {
+		if (Proxy.isProxyClass(stub.getClass())) {
+			InvocationHandler ih = Proxy.getInvocationHandler(stub);
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
 				return rih.getHandler() == this;
@@ -205,9 +214,9 @@ public class RmiHandler {
 	 * 
 	 * @param objects the iterable object to analyze
 	 */
-	public void removeMyStubs(Iterable<?> objects) {
+	public void removeOwnStubs(Iterable<?> objects) {
 		for (Iterator<?> it = objects.iterator(); it.hasNext();)
-			if (isMyStub(it.next()))
+			if (isOwnStub(it.next()))
 				it.remove();
 	}
 
@@ -217,9 +226,9 @@ public class RmiHandler {
 	 * 
 	 * @param objects the iterable object to analyze
 	 */
-	public void retainMyStubs(Iterable<?> objects) {
+	public void retainOwnStubs(Iterable<?> objects) {
 		for (Iterator<?> it = objects.iterator(); it.hasNext();)
-			if (!isMyStub(it.next()))
+			if (!isOwnStub(it.next()))
 				it.remove();
 	}
 
@@ -232,6 +241,10 @@ public class RmiHandler {
 		return disposed;
 	}
 
+	boolean areStubsShareable() {
+		return remotePort != 0;
+	}
+
 	/**
 	 * Executes the authentication negotiation
 	 * 
@@ -241,12 +254,24 @@ public class RmiHandler {
 	 * @throws RemoteAuthenticationException if the remote {@link RmiHandler} cannot
 	 *                                       authenticate the local one
 	 */
-	private void authentication() throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
+	private void handshake(OutputStream output, InputStream input)
+			throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
+		DataOutputStream outputStream = new DataOutputStream(output);
+		DataInputStream inputStream = new DataInputStream(input);
+
 		// checks that on the other side of the connection there is a handler that uses
 		// the same registry of this one
 		outputStream.writeUTF(rmiRegistry.registryKey);
 		outputStream.flush();
-		String remoteRegistryKey = inputStream.readUTF();
+		remoteRegistryKey = inputStream.readUTF();
+
+		outputStream.writeInt(rmiRegistry.getListenerPort());
+		remotePort = inputStream.readInt();
+
+		if (remotePort != 0)
+			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), remotePort);
+		else
+			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
 
 		if (remoteRegistryKey.equals(rmiRegistry.registryKey)) {
 			sameRegistryAuthentication = true;
@@ -336,7 +361,6 @@ public class RmiHandler {
 	 */
 	RmiHandler(Socket socket, RmiRegistry rmiRegistry, ProtocolEndpointFactory protocolEndpointFactory)
 			throws IOException {
-		inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
 		this.socket = socket;
 		this.rmiRegistry = rmiRegistry;
 
@@ -360,18 +384,18 @@ public class RmiHandler {
 			input = protocolEndpoint.getInputStream();
 		}
 
+		// send and receive authentication
+		handshake(output, input);
+
 		outputStream = new RmiObjectOutputStream(output, rmiRegistry);
 		outputStream.flush();
 		inputStream = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress,
 				rmiRegistry.getClassLoaderFactory());
 
-		// send and receive authentication
-		authentication();
-
 		receiver.setDaemon(true);
-		sender.setDaemon(true);
+		transmitter.setDaemon(true);
 		receiver.start();
-		sender.start();
+		transmitter.start();
 	}
 
 	/**
@@ -388,11 +412,11 @@ public class RmiHandler {
 	 */
 	public Object getStub(String objectId) throws UnknownHostException, IOException, InterruptedException {
 
-		RemoteInterfaceMessage hnd = new RemoteInterfaceMessage(objectId);
-		putHandle(hnd);
-		hnd.semaphore.acquire();
+		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
+		putHandle(msg);
+		msg.awaitResult();
 
-		return getStub(objectId, hnd.interfaces);
+		return getStub(objectId, msg.interfaces);
 	}
 
 	/**
@@ -421,6 +445,10 @@ public class RmiHandler {
 		return stub;
 	}
 
+	String getRemoteRegistryKey() {
+		return remoteRegistryKey;
+	}
+
 	/**
 	 * Gets the rmiRegistry used by this {@link RmiHandler}
 	 * 
@@ -434,7 +462,7 @@ public class RmiHandler {
 		if (rmiRegistry.isRemoteExceptionEnabled())
 			invocation.thrownException = new RemoteException();
 		invocation.returned = true;
-		invocation.semaphone.release();
+		invocation.signalResult();
 	}
 
 	/**
@@ -444,18 +472,18 @@ public class RmiHandler {
 	 * @param invocation the invocation request
 	 * @throws InterruptedException
 	 */
-	void putHandle(Message message) throws InterruptedException {
+	void putHandle(RmiMessage rmiMessage) throws InterruptedException {
 		if (messageQueue != null) {
-			if (codebasesMdification != rmiRegistry.rmiClassLoader.getModificationNumber()) {
-				Set<URL> codebases = new HashSet<>(rmiRegistry.getCodebases());
-				codebasesMdification = rmiRegistry.rmiClassLoader.getModificationNumber();
+			if (codebasesModification != rmiRegistry.getRmiClassLoader().getModificationNumber()) {
+				Set<URL> codebases = new HashSet<>(rmiRegistry.getRmiClassLoader().getCodebases());
+				codebasesModification = rmiRegistry.getRmiClassLoader().getModificationNumber();
 				if (!codebases.isEmpty()) {
-					CodebasesMessage cbhandle = new CodebasesMessage();
+					CodebaseUpdateMessage cbhandle = new CodebaseUpdateMessage();
 					cbhandle.codebases = codebases;
 					messageQueue.put(cbhandle);
 				}
 			}
-			messageQueue.put(message);
+			messageQueue.put(rmiMessage);
 		}
 	}
 
@@ -464,21 +492,21 @@ public class RmiHandler {
 	 * send new method invocations to the other peer or the invocation results. It
 	 * reads new invocations from the handleQueue.
 	 */
-	private Thread sender = new Thread() {
+	private Thread transmitter = new Thread() {
 		@Override
 		public void run() {
 
-			Message message = null;
+			RmiMessage rmiMessage = null;
 			try {
 
 				while (!isInterrupted()) {
-					message = null;
-					message = messageQueue.take();
+					rmiMessage = null;
+					rmiMessage = messageQueue.take();
 
-					if (message instanceof InvocationMessage) {
-						InvocationMessage invocation = (InvocationMessage) message;
+					if (rmiMessage instanceof InvocationMessage) {
+						InvocationMessage invocation = (InvocationMessage) rmiMessage;
 						try {
-							outputStream.writeUnshared(message);
+							outputStream.writeUnshared(rmiMessage);
 							invocations.put(invocation.id, invocation);
 						} catch (NotSerializableException e) {
 							invocation.thrownException = e;
@@ -487,9 +515,10 @@ public class RmiHandler {
 							}
 							throw e;
 						}
-					} else if (message instanceof ReturnMessage) {
+
+					} else if (rmiMessage instanceof ReturnMessage) {
 						// send invocation response
-						ReturnMessage retm = (ReturnMessage) message;
+						ReturnMessage retm = (ReturnMessage) rmiMessage;
 						try {
 							outputStream.writeUnshared(retm);
 						} catch (NotSerializableException e) {
@@ -500,28 +529,32 @@ public class RmiHandler {
 							e.printStackTrace();
 						}
 
-					} else if (message instanceof RemoteInterfaceMessage) {
-						RemoteInterfaceMessage rim = (RemoteInterfaceMessage) message;
+					} else if (rmiMessage instanceof RemoteInterfaceMessage) {
+						RemoteInterfaceMessage rim = (RemoteInterfaceMessage) rmiMessage;
 						if (rim.interfaces == null) {
 							interfaceRequests.put(rim.handleId, rim);
 						}
 						outputStream.writeUnshared(rim);
+
 					} else {
-						outputStream.writeUnshared(message);
+						outputStream.writeUnshared(rmiMessage);
 					}
 
 					outputStream.flush();
 				}
 			} catch (IOException | InterruptedException e) { // something gone wrong, destroy the handler
 
-				e.printStackTrace();
+				if (RmiRegistry.DEBUG) {
+					System.out.println("[RmiHandler.transmitter] transmitter thrown the following exception:");
+					e.printStackTrace();
+				}
 
-				if (message != null) {
-					if (message instanceof InvocationMessage) {
+				if (rmiMessage != null) {
+					if (rmiMessage instanceof InvocationMessage) {
 						// release invocation
-						InvocationMessage invocation = (InvocationMessage) message;
+						InvocationMessage invocation = (InvocationMessage) rmiMessage;
 						invocation.thrownException = e;
-						invocation.semaphone.release();
+						invocation.signalResult();
 					}
 				}
 
@@ -552,20 +585,26 @@ public class RmiHandler {
 		public void run() {
 			try {
 				while (!isInterrupted()) {
-					Message message = null;
+					RmiMessage rmiMessage = null;
+
+					// receive message
 					try {
-						message = (Message) (inputStream.readUnshared());
+						rmiMessage = (RmiMessage) (inputStream.readUnshared());
 					} catch (Exception e) {
-						System.out.println("Exception during receiving handle:");
-						// e.printStackTrace();
+						if (RmiRegistry.DEBUG) {
+							System.out.println("[RmiHandler.receiver] Exception while receiving RMI message: " + e);
+							e.printStackTrace();
+						}
 						ReturnMessage retHandle = new ReturnMessage();
 						retHandle.thrownException = e;
 						putHandle(retHandle);
 						Thread.sleep(rmiRegistry.getDgcLeaseValue());
 						throw e; // connection is broken
 					}
-					if (message instanceof InvocationMessage) {
-						InvocationMessage invocation = (InvocationMessage) message;
+
+					// interpret message
+					if (rmiMessage instanceof InvocationMessage) {
+						InvocationMessage invocation = (InvocationMessage) rmiMessage;
 
 						// get the skeleton
 						Skeleton skeleton = rmiRegistry.getSkeleton(invocation.objectId);
@@ -629,8 +668,9 @@ public class RmiHandler {
 							retHandle.invocationId = invocation.id;
 							retHandle.thrownException = new RuntimeException("authentication exception");
 						}
-					} else if (message instanceof ReturnMessage) {
-						ReturnMessage ret = (ReturnMessage) message;
+
+					} else if (rmiMessage instanceof ReturnMessage) {
+						ReturnMessage ret = (ReturnMessage) rmiMessage;
 
 						// remove the waiting invocation
 						InvocationMessage invocation = invocations.remove(ret.invocationId);
@@ -644,24 +684,27 @@ public class RmiHandler {
 							invocation.returned = true;
 
 							// notify the invocation handler that is waiting on it
-							invocation.semaphone.release();
+							invocation.signalResult();
 						} else if (ret.thrownException != null && ret.thrownException instanceof Exception) {
 							throw (Exception) ret.thrownException;
 						}
-					} else if (message instanceof FinalizeMessage) {
-						FinalizeMessage finHandle = (FinalizeMessage) message;
+
+					} else if (rmiMessage instanceof FinalizeMessage) {
+						FinalizeMessage finHandle = (FinalizeMessage) rmiMessage;
 						Skeleton sk = rmiRegistry.getSkeleton(finHandle.objectId);
 						if (sk != null)
 							sk.removeRef(RmiHandler.this);
-					} else if (message instanceof NewReferenceMessage) {
-						NewReferenceMessage newReferenceMessage = (NewReferenceMessage) message;
+
+					} else if (rmiMessage instanceof NewReferenceMessage) {
+						NewReferenceMessage newReferenceMessage = (NewReferenceMessage) rmiMessage;
 						if (newReferenceMessage.objectId != null) {
 							Skeleton sk = rmiRegistry.getSkeleton(newReferenceMessage.objectId);
 							sk.addRef(RmiHandler.this);
 							references.add(sk.getId());
 						}
-					} else if (message instanceof RemoteInterfaceMessage) {
-						RemoteInterfaceMessage rih = (RemoteInterfaceMessage) message;
+
+					} else if (rmiMessage instanceof RemoteInterfaceMessage) {
+						RemoteInterfaceMessage rih = (RemoteInterfaceMessage) rmiMessage;
 						if (rih.interfaces == null) {
 							List<Class<?>> remotes = rmiRegistry.getRemoteInterfaces(rih.objectId);
 							rih.interfaces = new Class<?>[remotes.size()];
@@ -670,21 +713,25 @@ public class RmiHandler {
 						} else {
 							RemoteInterfaceMessage req = interfaceRequests.get(rih.handleId);
 							req.interfaces = rih.interfaces;
-							req.semaphore.release();
+							req.signalResult();
 						}
-					} else if (message instanceof CodebasesMessage) {
+
+					} else if (rmiMessage instanceof CodebaseUpdateMessage) {
 						if (rmiRegistry.isCodeMobilityEnabled()) {
-							CodebasesMessage codebasesMessage = (CodebasesMessage) message;
-							inputStream.setRemoteCodebases(codebasesMessage.codebases);
+							CodebaseUpdateMessage codebaseUpdateMessage = (CodebaseUpdateMessage) rmiMessage;
+							inputStream.setRemoteCodebases(codebaseUpdateMessage.codebases);
 						}
+
 					} else {
 						throw new RuntimeException("AgileRMI INTERNAL ERROR");
 					}
 
 				}
 			} catch (Exception e) { // something gone wrong, destroy this handler and dispose it
-
-				e.printStackTrace();
+				if (RmiRegistry.DEBUG) {
+					System.out.println("[RmiHandler.receiver] receiver thrown the following exception:");
+					e.printStackTrace();
+				}
 
 				if (disposed)
 					return;

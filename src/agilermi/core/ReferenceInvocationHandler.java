@@ -1,5 +1,5 @@
 /**
- *  Copyright 2017 Salvatore Giampà
+ *  Copyright 2018-2019 Salvatore Giampà
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import javax.naming.OperationNotSupportedException;
  * @author Salvatore Giampa'
  *
  */
-class ReferenceInvocationHandler implements InvocationHandler, Serializable {
+final class ReferenceInvocationHandler implements InvocationHandler, Serializable {
 	private static final long serialVersionUID = -3573558299307908872L;
 
 	private String objectId;
