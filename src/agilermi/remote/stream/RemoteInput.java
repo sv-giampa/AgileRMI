@@ -21,7 +21,7 @@ import java.io.IOException;
 
 import agilermi.configuration.Remote;
 
-public interface ByteInput extends Closeable, Remote {
+public interface RemoteInput extends Closeable, Remote {
 
 	int read() throws IOException;
 

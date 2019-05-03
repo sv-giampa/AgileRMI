@@ -51,4 +51,15 @@ public class ServiceImpl implements Service {
 		observers.remove(o);
 	}
 
+	@Override
+	public Service getThis() {
+		return this;
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		System.out.println("equals called!");
+		return super.equals(obj);
+	}
+
 }

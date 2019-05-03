@@ -19,11 +19,11 @@ package agilermi.remote.stream;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class ByteOuputAdapter implements ByteOutput {
+public class StreamToRemoteOutput implements RemoteOutput {
 
 	private OutputStream outputStream;
 
-	public ByteOuputAdapter(OutputStream outputStream) {
+	public StreamToRemoteOutput(OutputStream outputStream) {
 		if (outputStream == null)
 			throw new NullPointerException("outputStream is null");
 		this.outputStream = outputStream;

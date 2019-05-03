@@ -33,7 +33,10 @@ final class WrapperClassLoader extends ClassLoader {
 
 	@Override
 	protected Class<?> findClass(String name) throws ClassNotFoundException {
-		return classLoader.loadClass(name);
+		Class<?> cls = classLoader.loadClass(name);
+//		System.out.printf("[WrapperClassLoader] loaded class %s from codesource %s\n", cls.getName(),
+//				cls.getProtectionDomain().getCodeSource());
+		return cls;
 	}
 
 	@Override

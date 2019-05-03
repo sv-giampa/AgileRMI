@@ -16,44 +16,50 @@
  **/
 package agilermi.remote.stream;
 
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
-public class ByteInputStream extends InputStream {
-	private ByteInput byteInput;
+public class StreamToRemoteInput implements RemoteInput {
 
-	public ByteInputStream(ByteInput byteInput) {
-		if (byteInput == null)
-			throw new NullPointerException("byteInput is null");
-		this.byteInput = byteInput;
+	private DataInputStream inputStream;
+
+	public static RemoteInput convert(InputStream inputStream) {
+		return new StreamToRemoteInput(inputStream);
+	}
+
+	private StreamToRemoteInput(InputStream inputStream) {
+		if (inputStream == null)
+			throw new NullPointerException("inputStream is null");
+		this.inputStream = new DataInputStream(inputStream);
 	}
 
 	@Override
 	public int read() throws IOException {
-		return byteInput.read();
+		return inputStream.read();
 	}
 
 	@Override
-	public int read(byte[] b) throws IOException {
-		byte[] buffer = byteInput.read(b.length);
-		System.arraycopy(buffer, 0, b, 0, buffer.length);
-		return b.length;
-	}
-
-	@Override
-	public int read(byte[] b, int off, int len) throws IOException {
-		byte[] buffer = byteInput.read(len);
-		System.arraycopy(buffer, 0, b, off, len);
-		return b.length;
+	public byte[] read(int len) throws IOException {
+		byte[] buffer = new byte[len];
+		inputStream.readFully(buffer);
+		return buffer;
 	}
 
 	@Override
 	public void close() throws IOException {
-		byteInput.close();
+		inputStream.close();
 	}
 
 	@Override
 	public int available() throws IOException {
-		return byteInput.available();
+		return inputStream.available();
 	}
+
+	@Override
+	protected void finalize() throws Throwable {
+		inputStream.close();
+		super.finalize();
+	}
+
 }

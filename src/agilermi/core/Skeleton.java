@@ -25,6 +25,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import agilermi.configuration.Unreferenced;
 
@@ -74,6 +77,20 @@ final class Skeleton {
 	}
 
 	synchronized void addRef(RmiHandler rmiHandler) {
+		if (scheduledRemoval != null) {
+			if (scheduledRemoval.cancel(false)) {
+				scheduledRemoval = null;
+			} else {
+				try {
+					scheduledRemoval.get();
+				} catch (InterruptedException e) {
+				} catch (ExecutionException e) {
+				}
+				rmiRegistry.skeletonByObject.put(object, this);
+				rmiRegistry.skeletonById.put(id, this);
+			}
+		}
+
 		Integer count = refCounters.get(rmiHandler);
 		if (count == null)
 			refCounters.put(rmiHandler, 1);
@@ -97,15 +114,21 @@ final class Skeleton {
 		scheduleRemoval();
 	}
 
-	private Thread scheduledRemove = null;
+	private Future<?> scheduledRemoval;
 
 	private synchronized void scheduleRemoval() {
 		if (RmiRegistry.DEBUG)
 			System.out.printf("[Distributed GC] trying to schedule removal\n\t(Object=%s; Class=%s)\n", object,
 					object.getClass().getName());
 		if (refGlobalCounter == 0 && names.isEmpty()) {
-			if (scheduledRemove != null)
-				scheduledRemove.interrupt();
+			if (scheduledRemoval != null) {
+				if (scheduledRemoval.cancel(false)) {
+					scheduledRemoval = null;
+				} else {
+					if (!scheduledRemoval.isCancelled())
+						return;
+				}
+			}
 			if (RmiRegistry.DEBUG)
 				System.out.printf("[Distributed GC] scheduling removal\n\t(Object=%s; Class=%s)\n", object,
 						object.getClass().getName());
@@ -113,14 +136,7 @@ final class Skeleton {
 			// schedule the skeleton remove operation to be executed afte 10 seconds, to
 			// avoid errors caused by network latecies (e.g. when a machine pass a remote
 			// reference of this skeleton to another machine)
-			scheduledRemove = new Thread(() -> {
-				// System.out.println("[Skeleton] scheduleRemove: start");
-				try {
-					Thread.sleep(rmiRegistry.getDgcLeaseValue());
-				} catch (InterruptedException e) {
-					return;
-				}
-				// System.out.println("[Skeleton] scheduleRemove: removed");
+			scheduledRemoval = rmiRegistry.executorService.schedule(() -> {
 				synchronized (Skeleton.this) {
 					if (refGlobalCounter == 0 && names.isEmpty()) {
 						if (object instanceof Unreferenced)
@@ -132,8 +148,8 @@ final class Skeleton {
 						rmiRegistry.unpublish(object);
 					}
 				}
-			});
-			scheduledRemove.start();
+			}, rmiRegistry.getDgcLeaseValue(), TimeUnit.MILLISECONDS);
+
 			if (RmiRegistry.DEBUG)
 				System.out.printf("[Distributed GC] removal scheduled at %d ms\n\t(Object=%s; Class=%s)\n",
 						rmiRegistry.getDgcLeaseValue(), object, object.getClass().getName());

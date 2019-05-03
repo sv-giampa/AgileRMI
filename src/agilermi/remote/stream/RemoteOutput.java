@@ -22,7 +22,7 @@ import java.io.IOException;
 
 import agilermi.configuration.Remote;
 
-public interface ByteOutput extends Closeable, Flushable, Remote {
+public interface RemoteOutput extends Closeable, Flushable, Remote {
 
 	void write(int b) throws IOException;
 

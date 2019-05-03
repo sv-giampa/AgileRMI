@@ -158,11 +158,16 @@ public final class RmiHandler {
 		}
 
 		// release all the handle in the handleQueue
+		// synchronized (messageQueue) {
 		for (RmiMessage rmiMessage : messageQueue) {
 			if (rmiMessage instanceof InvocationMessage) {
 				forceInvocationReturn((InvocationMessage) rmiMessage);
 			}
+			if (rmiMessage instanceof RemoteInterfaceMessage) {
+				((RemoteInterfaceMessage) rmiMessage).signalResult();
+			}
 		}
+		// }
 
 		for (Iterator<String> it = references.iterator(); it.hasNext();) {
 			Skeleton sk = rmiRegistry.getSkeleton(it.next());
@@ -178,7 +183,7 @@ public final class RmiHandler {
 		}
 
 		try {
-			rmiRegistry.failureObserver.failure(this, null);
+			rmiRegistry.failureHandler.failure(this, null);
 		} catch (Throwable e) {
 			e.printStackTrace();
 		}
@@ -416,6 +421,9 @@ public final class RmiHandler {
 		putHandle(msg);
 		msg.awaitResult();
 
+		if (msg.interfaces == null || msg.interfaces.length == 0 || disposed)
+			throw new IOException("RmiHandler has been disposed");
+
 		return getStub(objectId, msg.interfaces);
 	}
 
@@ -472,27 +480,42 @@ public final class RmiHandler {
 	 * @param invocation the invocation request
 	 * @throws InterruptedException
 	 */
-	void putHandle(RmiMessage rmiMessage) throws InterruptedException {
-		if (messageQueue != null) {
-			if (codebasesModification != rmiRegistry.getRmiClassLoader().getModificationNumber()) {
-				Set<URL> codebases = new HashSet<>(rmiRegistry.getRmiClassLoader().getCodebases());
-				codebasesModification = rmiRegistry.getRmiClassLoader().getModificationNumber();
-				if (!codebases.isEmpty()) {
-					CodebaseUpdateMessage cbhandle = new CodebaseUpdateMessage();
-					cbhandle.codebases = codebases;
-					messageQueue.put(cbhandle);
-				}
+	synchronized void putHandle(RmiMessage rmiMessage) throws InterruptedException {
+		if (disposed) {
+			if (rmiMessage instanceof InvocationMessage) {
+				forceInvocationReturn((InvocationMessage) rmiMessage);
 			}
-			messageQueue.put(rmiMessage);
+			if (rmiMessage instanceof RemoteInterfaceMessage) {
+				((RemoteInterfaceMessage) rmiMessage).signalResult();
+			}
+			return;
 		}
+		if (codebasesModification != rmiRegistry.getRmiClassLoader().getModificationNumber()) {
+			Set<URL> codebases = new HashSet<>(rmiRegistry.getRmiClassLoader().getCodebases());
+			codebasesModification = rmiRegistry.getRmiClassLoader().getModificationNumber();
+			if (!codebases.isEmpty()) {
+				CodebaseUpdateMessage cbhandle = new CodebaseUpdateMessage();
+				cbhandle.codebases = codebases;
+				messageQueue.put(cbhandle);
+			}
+		}
+		messageQueue.put(rmiMessage);
 	}
+
+	private TransmitterThread transmitter = new TransmitterThread();
+
+	private ReceiverThread receiver = new ReceiverThread();
 
 	/**
 	 * This is the thread that manages the output stream of the connection only. It
 	 * send new method invocations to the other peer or the invocation results. It
 	 * reads new invocations from the handleQueue.
 	 */
-	private Thread transmitter = new Thread() {
+	private class TransmitterThread extends Thread {
+		public TransmitterThread() {
+			setName("RmiHandler.transmitter");
+		}
+
 		@Override
 		public void run() {
 
@@ -509,9 +532,10 @@ public final class RmiHandler {
 							outputStream.writeUnshared(rmiMessage);
 							invocations.put(invocation.id, invocation);
 						} catch (NotSerializableException e) {
+							System.out.println(invocation.method);
 							invocation.thrownException = e;
 							synchronized (invocation) {
-								invocation.notifyAll();
+								invocation.signalResult();
 							}
 							throw e;
 						}
@@ -543,17 +567,18 @@ public final class RmiHandler {
 					outputStream.flush();
 				}
 			} catch (IOException | InterruptedException e) { // something gone wrong, destroy the handler
-
+				Exception exception = e;
 				if (RmiRegistry.DEBUG) {
 					System.out.println("[RmiHandler.transmitter] transmitter thrown the following exception:");
-					e.printStackTrace();
+					exception.printStackTrace();
 				}
+				// exception.printStackTrace();
 
 				if (rmiMessage != null) {
 					if (rmiMessage instanceof InvocationMessage) {
 						// release invocation
 						InvocationMessage invocation = (InvocationMessage) rmiMessage;
-						invocation.thrownException = e;
+						invocation.thrownException = new RemoteException(exception);
 						invocation.signalResult();
 					}
 				}
@@ -562,16 +587,9 @@ public final class RmiHandler {
 					return;
 
 				dispose(true);
-
-				try {
-					socket.close();
-				} catch (Exception e1) {
-				}
-
-				rmiRegistry.sendRmiHandlerFailure(RmiHandler.this, e);
 			}
 		}
-	};
+	}
 
 	/**
 	 * This is the thread that manages the input stream of the connection only. It
@@ -580,7 +598,11 @@ public final class RmiHandler {
 	 * second case it notifies the invocation handlers that are waiting for the
 	 * remote method to return.
 	 */
-	private Thread receiver = new Thread() {
+	private class ReceiverThread extends Thread {
+		public ReceiverThread() {
+			setName("RmiHandler.receiver");
+		}
+
 		@Override
 		public void run() {
 			try {
@@ -621,7 +643,7 @@ public final class RmiHandler {
 
 						// if authorized, starts the delegation thread
 						if (authorized) {
-							new Thread(() -> {
+							Thread delegated = new Thread(() -> {
 								ReturnMessage retHandle = new ReturnMessage();
 								retHandle.invocationId = invocation.id;
 								try {
@@ -661,7 +683,9 @@ public final class RmiHandler {
 								} catch (InterruptedException e) {
 								}
 
-							}).start();
+							});
+							delegated.start();
+
 						} else {
 							// not authorized: send an authorization exception
 							ReturnMessage retHandle = new ReturnMessage();
@@ -732,20 +756,13 @@ public final class RmiHandler {
 					System.out.println("[RmiHandler.receiver] receiver thrown the following exception:");
 					e.printStackTrace();
 				}
+				// e.printStackTrace();
 
 				if (disposed)
 					return;
 
 				dispose(true);
-
-				try {
-					socket.close();
-				} catch (Exception e1) {
-				}
-
-				rmiRegistry.sendRmiHandlerFailure(RmiHandler.this, e);
 			}
 		}
-	};
-
+	}
 }

@@ -36,9 +36,9 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 
 import javax.net.ServerSocketFactory;
@@ -49,7 +49,7 @@ import agilermi.codemobility.ClassLoaderFactory;
 import agilermi.codemobility.URLClassLoaderFactory;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
-import agilermi.configuration.FailureObserver;
+import agilermi.configuration.FailureHandler;
 import agilermi.configuration.Remote;
 import agilermi.exception.RemoteException;
 
@@ -72,14 +72,16 @@ public final class RmiRegistry {
 
 	static final boolean DEBUG = false;
 
-	private ExecutorService executorService = Executors.newFixedThreadPool(1, new ThreadFactory() {
-		@Override
-		public Thread newThread(Runnable task) {
-			Thread th = new Thread(task);
-			th.setDaemon(true);
-			return th;
-		}
-	});
+	ScheduledExecutorService executorService = Executors
+			.newScheduledThreadPool(Runtime.getRuntime().availableProcessors() + 1, new ThreadFactory() {
+				@Override
+				public Thread newThread(Runnable task) {
+					Thread th = new Thread(task);
+					th.setDaemon(true);
+					th.setName("RmiRegistry.executorService");
+					return th;
+				}
+			});
 
 	// identifies the current instance of RmiRegistry. It serves to avoid loop-back
 	// connections and to replace remote pointer that point to an object on this
@@ -111,7 +113,7 @@ public final class RmiRegistry {
 	private SocketFactory socketFactory;
 
 	// failure observers
-	private Set<FailureObserver> failureObservers = new HashSet<>();
+	private Set<FailureHandler> failureHandlers = new HashSet<>();
 
 	// enable the stubs to throw a remote exception when invoked after a connection
 	// failure
@@ -124,7 +126,7 @@ public final class RmiRegistry {
 	Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
 
 	// map: identifier -> skeleton
-	private Map<String, Skeleton> skeletonById = new HashMap<>();
+	Map<String, Skeleton> skeletonById = new HashMap<>();
 
 	// filter factory used to customize network communication streams
 	private ProtocolEndpointFactory protocolEndpointFactory;
@@ -146,6 +148,7 @@ public final class RmiRegistry {
 	private Runnable listenerTask = new Runnable() {
 		@Override
 		public void run() {
+			Thread.currentThread().setName("RmiRegistry.listenerTask");
 			while (listener != null && !listener.isInterrupted())
 				try {
 					Socket socket = serverSocket.accept();
@@ -162,10 +165,10 @@ public final class RmiRegistry {
 	private boolean finalized = false;
 
 	/**
-	 * Defines the {@link FailureObserver} used to manage the peer which closed the
+	 * Defines the {@link FailureHandler} used to manage the peer which closed the
 	 * connection
 	 */
-	FailureObserver failureObserver = new FailureObserver() {
+	FailureHandler failureHandler = new FailureHandler() {
 		@Override
 		public void failure(RmiHandler rmiHandler, Exception exception) {
 			if (finalized)
@@ -673,11 +676,7 @@ public final class RmiRegistry {
 			throws UnknownHostException, IOException, InterruptedException {
 
 		RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
-		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
-		rmiHandler.putHandle(msg);
-		msg.awaitResult();
-
-		return rmiHandler.getStub(objectId, msg.interfaces);
+		return rmiHandler.getStub(objectId);
 	}
 
 	/**
@@ -859,38 +858,49 @@ public final class RmiRegistry {
 	/**
 	 * Publish the given object respect to the specified interface.
 	 * 
-	 * @param objectId the identifier to use for this service
-	 * @param object   the implementation of the service to publish
+	 * @param name   the identifier to use for this service
+	 * @param object the implementation of the service to publish
 	 * @throws IllegalArgumentException if the specified identifier was already
 	 *                                  bound or if the objectId parameter matches
 	 *                                  the automatic referencing objectId pattern
 	 *                                  that is /\#[0-9]+/
 	 */
-	public void publish(String objectId, Object object) {
-		synchronized (skeletonById) {
-			if (objectId.startsWith(Skeleton.IDENTIFIER_PREFIX))
-				throw new IllegalArgumentException("The used identifier prefix '" + Skeleton.IDENTIFIER_PREFIX
-						+ "' is reserved to atomatic referencing. Please use another identifier pattern.");
+	public void publish(String name, Object object) {
+		try {
+			executorService.submit(() -> {
+				synchronized (skeletonById) {
+					if (name.startsWith(Skeleton.IDENTIFIER_PREFIX))
+						throw new IllegalArgumentException("The used identifier prefix '" + Skeleton.IDENTIFIER_PREFIX
+								+ "' is reserved to atomatic referencing. Please use another identifier pattern.");
 
-			Skeleton sk = null;
-			if (skeletonByObject.containsKey(object)) {
-				sk = skeletonByObject.get(object);
+					Skeleton sk = null;
+					if (skeletonByObject.containsKey(object)) {
+						sk = skeletonByObject.get(object);
 
-				if (skeletonById.containsKey(objectId) && skeletonById.get(objectId) != sk)
-					throw new IllegalArgumentException("the given object name '" + objectId + "' is already bound.");
+						if (skeletonById.containsKey(name) && skeletonById.get(name) != sk)
+							throw new IllegalArgumentException(
+									"the given object name '" + name + "' is already bound.");
 
-				if (sk.getObject() != object)
-					throw new IllegalStateException(
-							"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
-			} else {
-				if (skeletonById.containsKey(objectId))
-					throw new IllegalArgumentException("the given object name '" + objectId + "' is already bound.");
-				sk = new Skeleton(object, this);
-				skeletonById.put(sk.getId(), sk);
-				skeletonByObject.put(object, sk);
-			}
-			skeletonById.put(objectId, sk);
-			sk.addNames(objectId);
+						if (sk.getObject() != object)
+							throw new IllegalStateException(
+									"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
+					} else {
+						if (skeletonById.containsKey(name))
+							throw new IllegalArgumentException(
+									"the given object name '" + name + "' is already bound.");
+						sk = new Skeleton(object, this);
+						skeletonById.put(sk.getId(), sk);
+						skeletonByObject.put(object, sk);
+					}
+					skeletonById.put(name, sk);
+					sk.addNames(name);
+				}
+			}).get();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (ExecutionException e) {
+			throw (RuntimeException) e.getCause();
 		}
 	}
 
@@ -902,20 +912,29 @@ public final class RmiRegistry {
 	 * @return the generated identifier
 	 */
 	public String publish(Object object) {
-		synchronized (skeletonById) {
-			if (skeletonByObject.containsKey(object)) {
-				Skeleton sk = skeletonByObject.get(object);
-				if (sk.getObject() != object)
-					throw new IllegalStateException(
-							"the given object is associated to a skeleton that does not references it");
-				return sk.getId();
-			} else {
-				Skeleton sk = new Skeleton(object, this);
-				skeletonById.put(sk.getId(), sk);
-				skeletonByObject.put(object, sk);
-				return sk.getId();
-			}
+		try {
+			return executorService.submit(() -> {
+				synchronized (skeletonById) {
+					if (skeletonByObject.containsKey(object)) {
+						Skeleton sk = skeletonByObject.get(object);
+						if (sk.getObject() != object)
+							throw new IllegalStateException(
+									"the given object is associated to a skeleton that does not references it");
+						return sk.getId();
+					} else {
+						Skeleton sk = new Skeleton(object, this);
+						skeletonById.put(sk.getId(), sk);
+						skeletonByObject.put(object, sk);
+						return sk.getId();
+					}
+				}
+			}).get();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		} catch (ExecutionException e) {
+			throw (RuntimeException) e.getCause();
 		}
+		return null;
 	}
 
 	/**
@@ -952,24 +971,24 @@ public final class RmiRegistry {
 	}
 
 	/**
-	 * Attach a {@link FailureObserver} object
+	 * Attach a {@link FailureHandler} object
 	 * 
 	 * @param o the failure observer
 	 */
-	public void attachFailureObserver(FailureObserver o) {
-		synchronized (failureObservers) {
-			failureObservers.add(o);
+	public void attachFailureHandler(FailureHandler o) {
+		synchronized (failureHandlers) {
+			failureHandlers.add(o);
 		}
 	}
 
 	/**
-	 * Detach a {@link FailureObserver} object
+	 * Detach a {@link FailureHandler} object
 	 * 
 	 * @param o the failure observer
 	 */
-	public void detachFailureObserver(FailureObserver o) {
-		synchronized (failureObservers) {
-			failureObservers.remove(o);
+	public void detachFailureHandler(FailureHandler o) {
+		synchronized (failureHandlers) {
+			failureHandlers.remove(o);
 		}
 	}
 
@@ -1131,8 +1150,8 @@ public final class RmiRegistry {
 	 * @param exception  the exception thrown by the object peer
 	 */
 	void sendRmiHandlerFailure(RmiHandler rmiHandler, Exception exception) {
-		synchronized (failureObservers) {
-			failureObservers.forEach(o -> {
+		synchronized (failureHandlers) {
+			failureHandlers.forEach(o -> {
 				try {
 					o.failure(rmiHandler, exception);
 				} catch (Throwable e) {

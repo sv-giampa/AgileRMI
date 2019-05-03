@@ -25,7 +25,8 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.URL;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 import agilermi.codemobility.ClassLoaderFactory;
@@ -41,12 +42,13 @@ import agilermi.codemobility.ClassLoaderFactory;
  * @author Salvatore Giampa'
  *
  */
-final class RmiObjectInputStream extends ObjectInputStream {
+public final class RmiObjectInputStream extends ObjectInputStream {
 	private String remoteAddress;
 	private int remotePort;
 	private RmiRegistry rmiRegistry;
 	private RmiClassLoader rmiClassLoader;
-	private Set<URL> remoteCodebases = new HashSet<>();
+	// private Set<URL> remoteCodebases = new HashSet<>();
+	private Map<URL, ClassLoader> remoteCodebases = new HashMap<>();
 
 	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, InetSocketAddress address,
 			ClassLoaderFactory classLoaderFactory) throws IOException {
@@ -74,11 +76,11 @@ final class RmiObjectInputStream extends ObjectInputStream {
 		return remotePort;
 	}
 
-	public synchronized void setRemoteCodebases(Set<URL> urls) {
+	synchronized void setRemoteCodebases(Set<URL> urls) {
 		System.gc(); // try to garbage collect old classes and codebases
-		remoteCodebases.retainAll(urls);
+		remoteCodebases.keySet().retainAll(urls);
 		for (URL url : urls)
-			remoteCodebases.add(url);
+			remoteCodebases.put(url, null);
 	}
 
 	@Override
@@ -94,11 +96,15 @@ final class RmiObjectInputStream extends ObjectInputStream {
 		} catch (Exception e) {
 		}
 
-		for (URL codebase : remoteCodebases) {
+		for (URL codebase : remoteCodebases.keySet()) {
 			try {
 				// System.out.printf("Trying codebase %s to load class %s\n", codebase,
 				// desc.getName());
-				ClassLoader classLoader = new WrapperClassLoader(rmiRegistry.getClassLoaderFactory(), codebase);
+				ClassLoader classLoader = remoteCodebases.get(codebase);
+				if (classLoader == null) {
+					classLoader = new WrapperClassLoader(rmiRegistry.getClassLoaderFactory(), codebase);
+					remoteCodebases.put(codebase, classLoader);
+				}
 				Class<?> cls = classLoader.loadClass(desc.getName());
 				rmiClassLoader.addActiveCodebase(codebase, classLoader);
 				return cls;
@@ -119,9 +125,10 @@ final class RmiObjectInputStream extends ObjectInputStream {
 
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler sih = (RemoteInvocationHandler) ih;
-				if (sih.registryKey.equals(rmiRegistry.registryKey)) {
-					// System.out.println("remote reference rplaced with local object");
-					return rmiRegistry.getRemoteObject(sih.getObjectId());
+				if (sih.remoteRegistryKey.equals(rmiRegistry.registryKey)) {
+					Skeleton skeleton = rmiRegistry.getSkeleton(sih.getObjectId());
+					if (skeleton != null)
+						return skeleton.getObject();
 				}
 			}
 

@@ -19,40 +19,40 @@ package agilermi.remote.stream;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class ByteOutputStream extends OutputStream {
-	private ByteOutput byteOutput;
+public class RemoteOutputToStream extends OutputStream {
+	private RemoteOutput remoteOutput;
 
-	public ByteOutputStream(ByteOutput byteOutput) {
-		if (byteOutput == null)
-			throw new NullPointerException("byteOutput is null");
-		this.byteOutput = byteOutput;
+	public RemoteOutputToStream(RemoteOutput remoteOutput) {
+		if (remoteOutput == null)
+			throw new NullPointerException("remoteOutput is null");
+		this.remoteOutput = remoteOutput;
 	}
 
 	@Override
 	public void write(int b) throws IOException {
-		byteOutput.write(b);
+		remoteOutput.write(b);
 	}
 
 	@Override
 	public void write(byte[] b) throws IOException {
-		byteOutput.write(b);
+		remoteOutput.write(b);
 	}
 
 	@Override
 	public void write(byte[] b, int off, int len) throws IOException {
 		byte[] buffer = new byte[len];
 		System.arraycopy(b, off, buffer, 0, len);
-		byteOutput.write(buffer);
+		remoteOutput.write(buffer);
 	}
 
 	@Override
 	public void flush() throws IOException {
-		byteOutput.flush();
+		remoteOutput.flush();
 	}
 
 	@Override
 	public void close() throws IOException {
-		byteOutput.close();
+		remoteOutput.close();
 	}
 
 }

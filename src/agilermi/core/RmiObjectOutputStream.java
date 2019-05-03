@@ -31,6 +31,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.net.UnknownHostException;
+import java.util.List;
 
 import agilermi.configuration.Remote;
 
@@ -153,8 +154,7 @@ final class RmiObjectOutputStream extends ObjectOutputStream {
 				throw new WriteAbortedException(
 						"No-arg constructor is not accessible in the class " + objClass.getName(), e);
 			} catch (SecurityException e) {
-				throw new WriteAbortedException(
-						"No-arg constructor is not accessible in the class " + objClass.getName(), e);
+				throw new WriteAbortedException("SecurityException has been thrown", e);
 			} catch (NoSuchMethodException e) {
 				throw new WriteAbortedException("No-arg constructor not present in the class " + objClass.getName(), e);
 			} catch (InvocationTargetException e) {
@@ -199,35 +199,51 @@ final class RmiObjectOutputStream extends ObjectOutputStream {
 	}
 
 	private Object remotize(Object obj, Class<?> formalType) throws UnknownHostException, IOException {
-		// if necesseray routes the stub connection (if the remote machine of the
-		// sending stub have not an active RMI listener on its RmiRegistry)
+		if (obj == null)
+			return null;
+
+		// if necesseray routes the stub connection (if the remote machine connected to
+		// the sending stub has not an active RMI listener on its RmiRegistry)
 		boolean isStub = false;
-		boolean isShareableStub = false;
-		if (obj != null && obj instanceof Proxy) {
+		if (obj instanceof Proxy) {
 			InvocationHandler ih = Proxy.getInvocationHandler(obj);
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
 				isStub = true;
-				isShareableStub = rih.getHandler().areStubsShareable();
+
+				// if obj is a shareable stub, serializes it
+				if (rih.getHandler().areStubsShareable())
+					return obj;
 			}
 		}
 
-		if (obj != null && (isStub && !isShareableStub || rmiRegistry.isRemote(formalType)
-				|| (obj instanceof Remote && formalType.isInterface())
-				|| (rmiRegistry.getRemoteObjectId(obj) != null && formalType.isInterface()))) {
-
+		// the object is a non-shareable stub or its formal type is remote
+		if (isStub || rmiRegistry.isRemote(formalType)) {
 			if (RmiRegistry.DEBUG)
 				System.out.printf("[RmiObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
 						formalType.getName());
 
 			String objectId = rmiRegistry.publish(obj);
-
 			Object stub = Proxy.newProxyInstance(formalType.getClassLoader(), new Class<?>[] { formalType },
 					new ReferenceInvocationHandler(objectId));
 			return stub;
 
 		}
 
+		// remote object sent as a Object type (possibly type-erased)
+		if (formalType == Object.class) { // anti-type-erasure
+			List<Class<?>> remoteIfs = rmiRegistry.getRemoteInterfaces(obj.getClass());
+			if (remoteIfs.size() >= 1) {
+				String objectId = rmiRegistry.publish(obj);
+
+				Object stub = Proxy.newProxyInstance(remoteIfs.get(0).getClassLoader(),
+						remoteIfs.toArray(new Class<?>[] { remoteIfs.get(0) }),
+						new ReferenceInvocationHandler(objectId));
+				return stub;
+			}
+		}
+
+		// serializable object
 		return obj;
 	}
 
