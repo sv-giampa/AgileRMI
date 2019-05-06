@@ -17,7 +17,7 @@ import org.junit.jupiter.api.TestInstance.Lifecycle;
 
 import agilermi.authentication.Authenticator;
 import agilermi.communication.gzip.GzipEndpointFactory;
-import agilermi.configuration.FailureHandler;
+import agilermi.configuration.FaultHandler;
 import agilermi.core.RmiHandler;
 import agilermi.core.RmiRegistry;
 import agilermi.test.service.ObserverContainer;
@@ -91,9 +91,9 @@ class ClientTest {
 		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);
 
 		// attach failure observer to manage connection and I/O errors
-		clientRegistry.attachFailureHandler(new FailureHandler() {
+		clientRegistry.attachFaultHandler(new FaultHandler() {
 			@Override
-			public void failure(RmiHandler rmiHandler, Exception exception) {
+			public void onFault(RmiHandler rmiHandler, Exception exception) {
 				assertEquals(rmiHandler, rmiHandler);
 				if (rmiHandler.isDisposed())
 					return;

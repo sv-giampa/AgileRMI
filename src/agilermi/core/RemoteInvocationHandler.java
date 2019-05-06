@@ -25,7 +25,6 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
-import java.net.Socket;
 
 import agilermi.exception.LocalAuthenticationException;
 import agilermi.exception.RemoteException;
@@ -81,9 +80,11 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
 				host = rmiInput.getRemoteAddress();
 			RmiRegistry rmiRegistry = rmiInput.getRmiRegistry();
+			if (remoteRegistryKey.equals(rmiRegistry.registryKey) && rmiRegistry.getSkeleton(objectId) != null)
+				return;
 			handler = rmiRegistry.getRmiHandler(host, port, rmiRegistry.isMultiConnectionMode());
 		} else {
-			handler = new RmiHandler(new Socket(host, port), RmiRegistry.builder().build());
+			handler = RmiRegistry.builder().build().getRmiHandler(host, port);
 		}
 
 		try {

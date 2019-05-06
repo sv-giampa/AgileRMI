@@ -25,6 +25,7 @@ import java.net.Socket;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -40,6 +41,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
@@ -49,7 +53,7 @@ import agilermi.codemobility.ClassLoaderFactory;
 import agilermi.codemobility.URLClassLoaderFactory;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
-import agilermi.configuration.FailureHandler;
+import agilermi.configuration.FaultHandler;
 import agilermi.configuration.Remote;
 import agilermi.exception.RemoteException;
 
@@ -70,8 +74,7 @@ import agilermi.exception.RemoteException;
  */
 public final class RmiRegistry {
 
-	static final boolean DEBUG = false;
-
+	// executor service used to move network operations on other threads
 	ScheduledExecutorService executorService = Executors
 			.newScheduledThreadPool(Runtime.getRuntime().availableProcessors() + 1, new ThreadFactory() {
 				@Override
@@ -87,6 +90,8 @@ public final class RmiRegistry {
 	// connections and to replace remote pointer that point to an object on this
 	// same registry with their local instance
 	final String registryKey;
+
+	private boolean unmodifiable = false;
 
 	// lock for synchronized access to this instance
 	private Object lock = new Object();
@@ -113,7 +118,7 @@ public final class RmiRegistry {
 	private SocketFactory socketFactory;
 
 	// failure observers
-	private Set<FailureHandler> failureHandlers = new HashSet<>();
+	private Set<FaultHandler> faultHandlers = new HashSet<>();
 
 	// enable the stubs to throw a remote exception when invoked after a connection
 	// failure
@@ -156,6 +161,7 @@ public final class RmiRegistry {
 					if (!handlers.containsKey(rmiHandler.getInetSocketAddress()))
 						handlers.put(rmiHandler.getInetSocketAddress(), new ArrayList<>(1));
 					handlers.get(rmiHandler.getInetSocketAddress()).add(rmiHandler);
+					rmiHandler.start();
 				} catch (IOException e) {
 					// e.printStackTrace();
 				}
@@ -165,12 +171,12 @@ public final class RmiRegistry {
 	private boolean finalized = false;
 
 	/**
-	 * Defines the {@link FailureHandler} used to manage the peer which closed the
+	 * Defines the {@link FaultHandler} used to manage the peer which closed the
 	 * connection
 	 */
-	FailureHandler failureHandler = new FailureHandler() {
+	FaultHandler faultHandler = new FaultHandler() {
 		@Override
-		public void failure(RmiHandler rmiHandler, Exception exception) {
+		public void onFault(RmiHandler rmiHandler, Exception exception) {
 			if (finalized)
 				return;
 			List<RmiHandler> list = handlers.get(rmiHandler.getInetSocketAddress());
@@ -239,7 +245,6 @@ public final class RmiRegistry {
 	 * defaults:<br>
 	 * <ul>
 	 * <li>connection listener enabled: false</li>
-	 * <li>connection listener port: 0 (a random port)</li>
 	 * <li>connection listener daemon: true</li>
 	 * <li>{@link ServerSocketFactory}: null (that is
 	 * {@link ServerSocketFactory#getDefault()})</li>
@@ -272,6 +277,24 @@ public final class RmiRegistry {
 		private boolean codeMobilityEnabled = false;
 		private ClassLoaderFactory classLoaderFactory;
 
+		private int dgcLeaseValue = 30000;
+
+		private Collection<String> authentications = new HashSet<>();
+
+		private boolean multiConnectionMode = false;
+
+		private boolean unmodifiable = false;
+
+		/**
+		 * Sets the lease timeout after that the distributed garbage collection
+		 * mechanism will remove a non-named object from the registry.
+		 * 
+		 * @param dgcLeaseValue the lease timeout value in milliseconds
+		 */
+		public void setDgcLeaseValue(int dgcLeaseValue) {
+			this.dgcLeaseValue = dgcLeaseValue;
+		}
+
 		/**
 		 * Utility method to add a codebase at building time. Codebases can be added and
 		 * removed after the registry construction, too.
@@ -282,6 +305,34 @@ public final class RmiRegistry {
 		public Builder addCodebase(URL url) {
 			codebases.add(url);
 			return this;
+		}
+
+		/**
+		 * Utility method to add codebases at building time. Codebases can be added and
+		 * removed after the registry construction, too.
+		 * 
+		 * @param url the url to the codebase
+		 * @return this builder
+		 */
+		public void addCodebases(Iterable<URL> urls) {
+			if (urls == null)
+				return;
+			for (URL url : urls)
+				codebases.add(url);
+		}
+
+		/**
+		 * Utility method to add codebases at building time. Codebases can be added and
+		 * removed after the registry construction, too.
+		 * 
+		 * @param url the url to the codebase
+		 * @return this builder
+		 */
+		public void addCodebases(URL... urls) {
+			if (urls == null)
+				return;
+			for (URL url : urls)
+				codebases.add(url);
 		}
 
 		/**
@@ -304,10 +355,6 @@ public final class RmiRegistry {
 		 * @return this builder
 		 */
 		public Builder enableCodeMobility(boolean codeMobilityEnabled) {
-			// if (codeMobilityEnabled &&
-			// System.getProperty("java.vendor").matches(".*Android.*"))
-			// throw new IllegalStateException("The RMI code mobility is not supported on
-			// this platform.");
 			this.codeMobilityEnabled = codeMobilityEnabled;
 			return this;
 		}
@@ -356,15 +403,13 @@ public final class RmiRegistry {
 		}
 
 		/**
-		 * Builds the RmiRegistry.
+		 * Builds the RmiRegistry. After this call, the builder will not reset.
 		 * 
 		 * @return the built {@link RmiRegistry} instance
 		 */
 		public RmiRegistry build() {
 			RmiRegistry rmiRegistry = new RmiRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
-					authenticator, codeMobilityEnabled, codebases, classLoaderFactory);
-
-			codebases = new HashSet<>();
+					authenticator, codeMobilityEnabled, codebases, classLoaderFactory, dgcLeaseValue);
 			return rmiRegistry;
 		}
 	}
@@ -394,7 +439,7 @@ public final class RmiRegistry {
 	 */
 	private RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
 			ProtocolEndpointFactory protocolEndpointFactory, Authenticator authenticator, boolean codeMobilityEnabled,
-			Set<URL> codebases, ClassLoaderFactory classLoaderFactory) {
+			Set<URL> codebases, ClassLoaderFactory classLoaderFactory, int dgcLeaseValue) {
 		if (serverSocketFactory == null)
 			serverSocketFactory = ServerSocketFactory.getDefault();
 		if (socketFactory == null)
@@ -414,6 +459,72 @@ public final class RmiRegistry {
 			classLoaderFactory = new URLClassLoaderFactory();
 		this.classLoaderFactory = classLoaderFactory;
 		this.rmiClassLoader = new RmiClassLoader(codebases, classLoaderFactory);
+		this.dgcLeaseValue = dgcLeaseValue;
+	}
+
+	private Thread locker;
+	private Object owner;
+	private Lock modificationLock = new ReentrantLock();
+	private Condition modificationCondition = modificationLock.newCondition();
+
+	public void disableModification(Object owner) {
+		modificationLock.lock();
+		try {
+			if (this.owner == null) {
+				this.owner = owner;
+			} else if (this.owner != owner) {
+				throw new IllegalStateException("This RMI registry is locked by another owner.");
+			}
+		} finally {
+			modificationLock.unlock();
+		}
+	}
+
+	public void enableModification(Object owner) {
+		modificationLock.lock();
+		try {
+			if (this.owner == owner) {
+				this.owner = null;
+				locker = null;
+				modificationCondition.signalAll();
+			}
+		} finally {
+			modificationLock.unlock();
+		}
+	}
+
+	public void lock(Object owner) {
+		modificationLock.lock();
+		try {
+			if (this.owner == owner) {
+				while (locker != null)
+					modificationCondition.await();
+				locker = Thread.currentThread();
+			} else if (this.owner == null) {
+				locker = Thread.currentThread();
+			} else
+				throw new IllegalStateException();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+			return;
+		} finally {
+			modificationLock.unlock();
+		}
+	}
+
+	public void unlock() {
+		if (locker == null)
+			return;
+		if (Thread.currentThread() == locker) {
+			modificationLock.lock();
+			try {
+				modificationCondition.signalAll();
+				locker = null;
+			} finally {
+				modificationLock.unlock();
+			}
+		} else
+			throw new IllegalStateException("This registry is currently locked by another owner.");
 	}
 
 	/**
@@ -443,7 +554,15 @@ public final class RmiRegistry {
 	 * @param dgcLeaseValue the lease timeout value in milliseconds
 	 */
 	public void setDgcLeaseValue(int dgcLeaseValue) {
-		this.dgcLeaseValue = dgcLeaseValue;
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+
+			this.dgcLeaseValue = dgcLeaseValue;
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
 	public Set<URL> getCodebases() {
@@ -451,27 +570,55 @@ public final class RmiRegistry {
 	}
 
 	public void addCodebases(Iterable<URL> urls) {
-		if (urls == null)
-			return;
-		for (URL url : urls)
-			rmiClassLoader.addCodebase(url);
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			if (urls == null)
+				return;
+			for (URL url : urls)
+				rmiClassLoader.addCodebase(url);
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
-	public void addCodebases(URL[] urls) {
-		if (urls == null)
-			return;
-		for (URL url : urls)
-			rmiClassLoader.addCodebase(url);
+	public void addCodebases(URL... urls) {
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			if (urls == null)
+				return;
+			for (URL url : urls)
+				rmiClassLoader.addCodebase(url);
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
 	public void addCodebase(URL url) {
-		if (url == null)
-			return;
-		rmiClassLoader.addCodebase(url);
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			if (url == null)
+				return;
+			rmiClassLoader.addCodebase(url);
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
 	public void removeCodebase(URL url) {
-		rmiClassLoader.removeCodebase(url);
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			rmiClassLoader.removeCodebase(url);
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
 	/**
@@ -502,7 +649,14 @@ public final class RmiRegistry {
 	 *                            remote codebases. Set it to false otherwise.
 	 */
 	public void setCodeMobilityEnabled(boolean codeMobilityEnabled) {
-		this.codeMobilityEnabled = codeMobilityEnabled;
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			this.codeMobilityEnabled = codeMobilityEnabled;
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
 	/**
@@ -514,14 +668,21 @@ public final class RmiRegistry {
 	 * @param authPassphrase the authentication pass-phrase
 	 */
 	public void setAuthentication(String host, int port, String authId, String authPassphrase) {
+		modificationLock.lock();
 		try {
-			InetAddress address = InetAddress.getByName(host);
-			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			try {
+				InetAddress address = InetAddress.getByName(host);
+				host = address.getCanonicalHostName();
+			} catch (UnknownHostException e) {
+			}
+			String key = host + ":" + port;
+			String[] auth = new String[] { authId, authPassphrase };
+			authenticationMap.put(key, auth);
+		} finally {
+			modificationLock.unlock();
 		}
-		String key = host + ":" + port;
-		String[] auth = new String[] { authId, authPassphrase };
-		authenticationMap.put(key, auth);
 	}
 
 	/**
@@ -531,13 +692,20 @@ public final class RmiRegistry {
 	 * @param port the remote port
 	 */
 	public void removeAuthentication(String host, int port) {
+		modificationLock.lock();
 		try {
-			InetAddress address = InetAddress.getByName(host);
-			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			try {
+				InetAddress address = InetAddress.getByName(host);
+				host = address.getCanonicalHostName();
+			} catch (UnknownHostException e) {
+			}
+			String key = host + ":" + port;
+			authenticationMap.remove(key);
+		} finally {
+			modificationLock.unlock();
 		}
-		String key = host + ":" + port;
-		authenticationMap.remove(key);
 	}
 
 	/**
@@ -589,7 +757,14 @@ public final class RmiRegistry {
 	 * @param multiConnectionMode true to enable, false to disable
 	 */
 	public void setMultiConnectionMode(boolean multiConnectionMode) {
-		this.multiConnectionMode = multiConnectionMode;
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			this.multiConnectionMode = multiConnectionMode;
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
 	/**
@@ -714,11 +889,13 @@ public final class RmiRegistry {
 					handlers.put(inetAddress, new ArrayList<>(1));
 				List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
 				RmiHandler rmiHandler = null;
-				if (rmiHandlers.size() == 0 || newConnection)
-					rmiHandlers.add(rmiHandler = new RmiHandler(socketFactory.createSocket(host, port),
-							RmiRegistry.this, protocolEndpointFactory));
+				if (rmiHandlers.size() == 0 || newConnection) {
+					rmiHandler = new RmiHandler(socketFactory.createSocket(host, port), RmiRegistry.this,
+							protocolEndpointFactory);
+					rmiHandlers.add(rmiHandler);
+					rmiHandler.start();
+				}
 				rmiHandler = rmiHandlers.get(0);
-				// rmiHandler = rmiHandlers.get((int) (Math.random() * rmiHandlers.size()));
 				return rmiHandler;
 			}
 		};
@@ -741,7 +918,7 @@ public final class RmiRegistry {
 					return null;
 				List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
 				for (RmiHandler hnd : rmiHandlers) {
-					hnd.dispose(false);
+					hnd.dispose(true);
 				}
 				rmiHandlers.clear();
 			}
@@ -769,23 +946,30 @@ public final class RmiRegistry {
 	 * @throws IOException if I/O errors occur
 	 */
 	public void enableListener(int port, boolean daemon) throws IOException {
-		Callable<Void> callable = () -> {
-			synchronized (serverSocketFactory) {
-				if (listener != null)
-					disableListener();
-				serverSocket = serverSocketFactory.createServerSocket(port);
-				this.listenerPort = serverSocket.getLocalPort();
-				listener = new Thread(listenerTask);
-				listener.setDaemon(daemon);
-				listener.start();
-			}
-			return null;
-		};
+		modificationLock.lock();
 		try {
-			executorService.submit(callable).get();
-		} catch (InterruptedException e) {
-		} catch (ExecutionException e) {
-			throw (IOException) e.getCause();
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			Callable<Void> callable = () -> {
+				synchronized (serverSocketFactory) {
+					if (listener != null)
+						disableListener();
+					serverSocket = serverSocketFactory.createServerSocket(port);
+					this.listenerPort = serverSocket.getLocalPort();
+					listener = new Thread(listenerTask);
+					listener.setDaemon(daemon);
+					listener.start();
+				}
+				return null;
+			};
+			try {
+				executorService.submit(callable).get();
+			} catch (InterruptedException e) {
+			} catch (ExecutionException e) {
+				throw (IOException) e.getCause();
+			}
+		} finally {
+			modificationLock.unlock();
 		}
 	}
 
@@ -794,26 +978,33 @@ public final class RmiRegistry {
 	 * accept new incoming connections, but does not close the current open ones.
 	 */
 	public void disableListener() {
-		Callable<Void> callable = () -> {
-			synchronized (serverSocketFactory) {
-				if (listener == null)
-					return null;
-
-				listener.interrupt();
-				listener = null;
-				try {
-					serverSocket.close();
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-				listenerPort = 0;
-			}
-			return null;
-		};
+		modificationLock.lock();
 		try {
-			executorService.submit(callable).get();
-		} catch (InterruptedException e) {
-		} catch (ExecutionException e) {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			Callable<Void> callable = () -> {
+				synchronized (serverSocketFactory) {
+					if (listener == null)
+						return null;
+
+					listener.interrupt();
+					listener = null;
+					try {
+						serverSocket.close();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+					listenerPort = 0;
+				}
+				return null;
+			};
+			try {
+				executorService.submit(callable).get();
+			} catch (InterruptedException e) {
+			} catch (ExecutionException e) {
+			}
+		} finally {
+			modificationLock.unlock();
 		}
 	}
 
@@ -843,7 +1034,14 @@ public final class RmiRegistry {
 	 *               otherwise
 	 */
 	public void enableRemoteException(boolean enable) {
-		this.remoteExceptionEnabled = enable;
+		modificationLock.lock();
+		try {
+			if (owner != null && Thread.currentThread() != locker)
+				throw new IllegalStateException("The modifications to this RMI registry are locked.");
+			this.remoteExceptionEnabled = enable;
+		} finally {
+			modificationLock.unlock();
+		}
 	}
 
 	/**
@@ -897,7 +1095,6 @@ public final class RmiRegistry {
 				}
 			}).get();
 		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (ExecutionException e) {
 			throw (RuntimeException) e.getCause();
@@ -954,41 +1151,24 @@ public final class RmiRegistry {
 	}
 
 	/**
-	 * Unpublish the remote object that is associated to the given identifier
+	 * Attach a {@link FaultHandler} object
 	 * 
-	 * @param objectId the object identifier of the remote object
+	 * @param o the failure observer
 	 */
-
-	public void unpublish(String objectId) {
-		synchronized (skeletonById) {
-			Skeleton skeleton = skeletonById.remove(objectId);
-			if (skeleton != null) {
-				skeletonByObject.remove(skeleton.getObject());
-				for (String name : skeleton.names())
-					skeletonById.remove(name);
-			}
+	public void attachFaultHandler(FaultHandler o) {
+		synchronized (faultHandlers) {
+			faultHandlers.add(o);
 		}
 	}
 
 	/**
-	 * Attach a {@link FailureHandler} object
+	 * Detach a {@link FaultHandler} object
 	 * 
 	 * @param o the failure observer
 	 */
-	public void attachFailureHandler(FailureHandler o) {
-		synchronized (failureHandlers) {
-			failureHandlers.add(o);
-		}
-	}
-
-	/**
-	 * Detach a {@link FailureHandler} object
-	 * 
-	 * @param o the failure observer
-	 */
-	public void detachFailureHandler(FailureHandler o) {
-		synchronized (failureHandlers) {
-			failureHandlers.remove(o);
+	public void detachFailureHandler(FaultHandler o) {
+		synchronized (faultHandlers) {
+			faultHandlers.remove(o);
 		}
 	}
 
@@ -1150,11 +1330,12 @@ public final class RmiRegistry {
 	 * @param exception  the exception thrown by the object peer
 	 */
 	void sendRmiHandlerFailure(RmiHandler rmiHandler, Exception exception) {
-		synchronized (failureHandlers) {
-			failureHandlers.forEach(o -> {
+		synchronized (faultHandlers) {
+			faultHandlers.forEach(o -> {
 				try {
-					o.failure(rmiHandler, exception);
+					o.onFault(rmiHandler, exception);
 				} catch (Throwable e) {
+					e.printStackTrace();
 				}
 			});
 		}

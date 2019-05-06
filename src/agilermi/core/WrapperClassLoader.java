@@ -34,14 +34,15 @@ final class WrapperClassLoader extends ClassLoader {
 	@Override
 	protected Class<?> findClass(String name) throws ClassNotFoundException {
 		Class<?> cls = classLoader.loadClass(name);
-//		System.out.printf("[WrapperClassLoader] loaded class %s from codesource %s\n", cls.getName(),
-//				cls.getProtectionDomain().getCodeSource());
+		if (Debug.DEBUG)
+			System.out.printf("[WrapperClassLoader] loaded class %s from codesource %s\n", cls.getName(),
+					cls.getProtectionDomain().getCodeSource());
 		return cls;
 	}
 
 	@Override
 	protected void finalize() throws Throwable {
-		if (RmiRegistry.DEBUG)
+		if (Debug.DEBUG)
 			System.out.println("[WrapperClassLoader.finalize()] class loader finalized: " + url);
 		if (classLoader instanceof Closeable)
 			((Closeable) classLoader).close();

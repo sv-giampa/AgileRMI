@@ -46,14 +46,16 @@ public final class RmiObjectInputStream extends ObjectInputStream {
 	private String remoteAddress;
 	private int remotePort;
 	private RmiRegistry rmiRegistry;
+	private RmiHandler rmiHandler;
 	private RmiClassLoader rmiClassLoader;
 	// private Set<URL> remoteCodebases = new HashSet<>();
 	private Map<URL, ClassLoader> remoteCodebases = new HashMap<>();
 
-	public RmiObjectInputStream(InputStream inputStream, RmiRegistry rmiRegistry, InetSocketAddress address,
+	public RmiObjectInputStream(InputStream inputStream, RmiHandler rmiHandler, InetSocketAddress address,
 			ClassLoaderFactory classLoaderFactory) throws IOException {
 		super(inputStream);
-		this.rmiRegistry = rmiRegistry;
+		this.rmiHandler = rmiHandler;
+		this.rmiRegistry = rmiHandler.getRmiRegistry();
 		this.remoteAddress = address.getHostString();
 		this.remotePort = address.getPort();
 		this.rmiClassLoader = rmiRegistry.getRmiClassLoader();
@@ -77,15 +79,15 @@ public final class RmiObjectInputStream extends ObjectInputStream {
 	}
 
 	synchronized void setRemoteCodebases(Set<URL> urls) {
-		System.gc(); // try to garbage collect old classes and codebases
 		remoteCodebases.keySet().retainAll(urls);
 		for (URL url : urls)
-			remoteCodebases.put(url, null);
+			if (!remoteCodebases.containsKey(url))
+				remoteCodebases.put(url, null);
+		System.gc(); // try to garbage collect old classes and codebases
 	}
 
 	@Override
 	protected synchronized Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
-
 		try {
 			return super.resolveClass(desc);
 		} catch (Exception e) {
@@ -135,7 +137,7 @@ public final class RmiObjectInputStream extends ObjectInputStream {
 			if (ih instanceof ReferenceInvocationHandler) {
 				ReferenceInvocationHandler lih = (ReferenceInvocationHandler) ih;
 				Class<?>[] interfaces = obj.getClass().getInterfaces();
-				Object found = rmiRegistry.getStub(remoteAddress, remotePort, lih.getObjectId(), interfaces);
+				Object found = rmiHandler.getStub(lih.getObjectId(), interfaces);
 				if (found != null)
 					obj = found;
 			}

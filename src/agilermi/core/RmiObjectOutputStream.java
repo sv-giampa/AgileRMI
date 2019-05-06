@@ -209,17 +209,17 @@ final class RmiObjectOutputStream extends ObjectOutputStream {
 			InvocationHandler ih = Proxy.getInvocationHandler(obj);
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
-				isStub = true;
-
 				// if obj is a shareable stub, serializes it
 				if (rih.getHandler().areStubsShareable())
 					return obj;
+
+				isStub = true;
 			}
 		}
 
 		// the object is a non-shareable stub or its formal type is remote
 		if (isStub || rmiRegistry.isRemote(formalType)) {
-			if (RmiRegistry.DEBUG)
+			if (Debug.DEBUG)
 				System.out.printf("[RmiObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
 						formalType.getName());
 

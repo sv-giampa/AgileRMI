@@ -137,7 +137,7 @@ class InvocationMessage implements RmiMessage {
 		this.parameters = parameters;
 	}
 
-	private transient Semaphore semaphone = new Semaphore(0);
+	private transient Semaphore semaphore = new Semaphore(0);
 
 	/**
 	 * Waits the result of the remote invocation. After the execution of this
@@ -145,11 +145,12 @@ class InvocationMessage implements RmiMessage {
 	 * fields will contain the returned object and its class, respectively.
 	 */
 	public void awaitResult() {
-		try {
-			semaphone.acquire();
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-		}
+		if (semaphore != null)
+			try {
+				semaphore.acquire();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
 	}
 
 	/**
@@ -158,7 +159,8 @@ class InvocationMessage implements RmiMessage {
 	 * fields.
 	 */
 	public void signalResult() {
-		semaphone.release();
+		if (semaphore != null)
+			semaphore.release();
 	}
 }
 
@@ -216,24 +218,26 @@ class RemoteInterfaceMessage implements RmiMessage {
 		this.objectId = objectId;
 	}
 
-	private transient Semaphore semaphone = new Semaphore(0);
+	private transient Semaphore semaphore = new Semaphore(0);
 
 	/**
 	 * Await for result
 	 */
 	public void awaitResult() {
-		try {
-			semaphone.acquire();
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-		}
+		if (semaphore != null)
+			try {
+				semaphore.acquire();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
 	}
 
 	/**
 	 * Signal the reception of the result
 	 */
 	public void signalResult() {
-		semaphone.release();
+		if (semaphore != null)
+			semaphore.release();
 	}
 
 }

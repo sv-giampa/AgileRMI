@@ -70,7 +70,7 @@ final class Skeleton {
 		count = count - 1;
 		refCounters.put(rmiHandler, count);
 		refGlobalCounter--;
-		if (RmiRegistry.DEBUG)
+		if (Debug.DEBUG)
 			System.out.printf("[Distributed GC] removed remote reference shared with '%s'\n\t(Object=%s; Class=%s)\n",
 					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
 		scheduleRemoval();
@@ -99,7 +99,7 @@ final class Skeleton {
 			refCounters.put(rmiHandler, count);
 		}
 		refGlobalCounter++;
-		if (RmiRegistry.DEBUG)
+		if (Debug.DEBUG)
 			System.out.printf("[Distributed GC] added remote reference shared with '%s'\n\t(Object=%s; Class=%s)\n",
 					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
 	}
@@ -107,7 +107,7 @@ final class Skeleton {
 	synchronized void removeAllRefs(RmiHandler rmiHandler) {
 		Integer count = refCounters.remove(rmiHandler);
 		refGlobalCounter -= count;
-		if (RmiRegistry.DEBUG)
+		if (Debug.DEBUG)
 			System.out.printf(
 					"[Distributed GC] removed all remote references shared with '%s'\n\t(Object=%s; Class=%s)\n",
 					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
@@ -117,7 +117,7 @@ final class Skeleton {
 	private Future<?> scheduledRemoval;
 
 	private synchronized void scheduleRemoval() {
-		if (RmiRegistry.DEBUG)
+		if (Debug.DEBUG)
 			System.out.printf("[Distributed GC] trying to schedule removal\n\t(Object=%s; Class=%s)\n", object,
 					object.getClass().getName());
 		if (refGlobalCounter == 0 && names.isEmpty()) {
@@ -129,7 +129,7 @@ final class Skeleton {
 						return;
 				}
 			}
-			if (RmiRegistry.DEBUG)
+			if (Debug.DEBUG)
 				System.out.printf("[Distributed GC] scheduling removal\n\t(Object=%s; Class=%s)\n", object,
 						object.getClass().getName());
 
@@ -142,7 +142,7 @@ final class Skeleton {
 						if (object instanceof Unreferenced)
 							((Unreferenced) object).unreferenced();
 
-						if (RmiRegistry.DEBUG)
+						if (Debug.DEBUG)
 							System.out.printf("[Distributed GC] removed from registry\n\t(Object=%s; Class=%s)\n",
 									object, object.getClass().getName());
 						rmiRegistry.unpublish(object);
@@ -150,7 +150,7 @@ final class Skeleton {
 				}
 			}, rmiRegistry.getDgcLeaseValue(), TimeUnit.MILLISECONDS);
 
-			if (RmiRegistry.DEBUG)
+			if (Debug.DEBUG)
 				System.out.printf("[Distributed GC] removal scheduled at %d ms\n\t(Object=%s; Class=%s)\n",
 						rmiRegistry.getDgcLeaseValue(), object, object.getClass().getName());
 		}

@@ -3,7 +3,7 @@ package agilermi.example.client;
 import java.io.IOException;
 import java.net.UnknownHostException;
 
-import agilermi.configuration.FailureHandler;
+import agilermi.configuration.FaultHandler;
 import agilermi.core.RmiHandler;
 import agilermi.core.RmiRegistry;
 import agilermi.example.service.Service;
@@ -22,10 +22,10 @@ public class AgileRmiClient {
 		RmiRegistry registry = RmiRegistry.builder().build();
 
 		// attach failure observer to manage connection and I/O errors
-		registry.attachFailureHandler(new FailureHandler() {
+		registry.attachFaultHandler(new FaultHandler() {
 			@Override
-			public void failure(RmiHandler objectPeer, Exception exception) {
-				System.out.println("[FailureHandler] The object peer generated an error:\n" + exception);
+			public void onFault(RmiHandler objectPeer, Exception exception) {
+				System.out.println("[FaultHandler] The object peer generated an error:\n" + exception);
 			}
 		});
 

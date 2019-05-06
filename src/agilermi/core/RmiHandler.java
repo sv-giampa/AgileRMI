@@ -27,6 +27,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URL;
@@ -183,7 +184,7 @@ public final class RmiHandler {
 		}
 
 		try {
-			rmiRegistry.failureHandler.failure(this, null);
+			rmiRegistry.faultHandler.onFault(this, null);
 		} catch (Throwable e) {
 			e.printStackTrace();
 		}
@@ -246,91 +247,85 @@ public final class RmiHandler {
 		return disposed;
 	}
 
-	boolean areStubsShareable() {
-		return remotePort != 0;
+	/**
+	 * Gets a stub for the specified object identifier representing a remote object
+	 * on the remote machine. This method performs a request to the remote machine
+	 * to get the remote interfaces of the remote object, then creates its stub. All
+	 * the remote interfaces of the remote object must be visible by the default
+	 * class loader and they must be known by the local runtime.
+	 * 
+	 * @param objectId the object identifier
+	 * @param <T>      the stub interface type
+	 * @return A dynamic proxy object that represents the remote instance. It is an
+	 *         instance for the specified stub interface
+	 */
+	public Object getStub(String objectId) throws UnknownHostException, IOException, InterruptedException {
+
+		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
+		putHandle(msg);
+		msg.awaitResult();
+
+		if (msg.interfaces == null || msg.interfaces.length == 0 || disposed)
+			throw new IOException("RmiHandler has been disposed");
+
+		return getStub(objectId, msg.interfaces);
 	}
 
 	/**
-	 * Executes the authentication negotiation
+	 * Gets a stub for the specified object identifier respect to the specified
+	 * interfaces, representing a remote object on the remote machine. This method
+	 * performs no network operation, just creates the stub. All the interfaces
+	 * passed must be visible by the class loader of the first interface.
 	 * 
-	 * @throws IOException                   if an I/O error occurs
-	 * @throws LocalAuthenticationException  if the local {@link RmiHandler} cannot
-	 *                                       authenticate the remote one
-	 * @throws RemoteAuthenticationException if the remote {@link RmiHandler} cannot
-	 *                                       authenticate the local one
+	 * @param objectId       the object identifier
+	 * @param stubInterfaces the interface whose methods must be stubbed, that is
+	 *                       the interface used to access the remote object
+	 *                       operations
+	 * @param <T>            the stub interface type
+	 * @return A dynamic proxy object that represents the remote instance. It is an
+	 *         instance for the specified stub interface
 	 */
-	private void handshake(OutputStream output, InputStream input)
-			throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
-		DataOutputStream outputStream = new DataOutputStream(output);
-		DataInputStream inputStream = new DataInputStream(input);
+	public Object getStub(String objectId, Class<?>... stubInterfaces) {
+		if (disposed)
+			throw new IllegalStateException("This RmiHandler has been disposed");
+		if (stubInterfaces.length == 0)
+			throw new IllegalArgumentException("No interface has been passed");
 
-		// checks that on the other side of the connection there is a handler that uses
-		// the same registry of this one
-		outputStream.writeUTF(rmiRegistry.registryKey);
-		outputStream.flush();
-		remoteRegistryKey = inputStream.readUTF();
+		Object stub;
+		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
+				new RemoteInvocationHandler(objectId, this));
+		return stub;
+	}
 
-		outputStream.writeInt(rmiRegistry.getListenerPort());
-		remotePort = inputStream.readInt();
-
-		if (remotePort != 0)
-			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), remotePort);
-		else
-			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
-
-		if (remoteRegistryKey.equals(rmiRegistry.registryKey)) {
-			sameRegistryAuthentication = true;
-			outputStream.writeBoolean(true);
-			outputStream.flush();
-		} else {
-			sameRegistryAuthentication = false;
-			outputStream.writeBoolean(false);
-			outputStream.flush();
-		}
-
-		if (inputStream.readBoolean()) // the remote handler recognized the registry key
-			return;
-
-		// if on the other side there is not the same registry of this handler, do
-		// normal authentication
-		outputStream.writeUTF(authIdentifier);
-		outputStream.writeUTF(authPassphrase);
-		outputStream.flush();
-
-		String authPass;
-		try {
-			remoteAuthIdentifier = inputStream.readUTF();
-			authPass = inputStream.readUTF();
-		} catch (Exception e) {
-			e.printStackTrace();
-			try {
-				outputStream.writeBoolean(false);
-				outputStream.flush();
-			} catch (IOException e1) {
-			}
-			throw new LocalAuthenticationException();
-		}
-
-		if (rmiRegistry.getAuthenticator() == null
-				|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
-			try {
-				outputStream.writeBoolean(true);
-				outputStream.flush();
-			} catch (IOException e1) {
-			}
-		} else {
-			try {
-				outputStream.writeBoolean(false);
-				outputStream.flush();
-			} catch (IOException e1) {
-			}
-			throw new LocalAuthenticationException();
-		}
-
-		boolean authResult = inputStream.readBoolean();
-
-		if (!authResult)
-			throw new RemoteAuthenticationException();
+	/**
+	 * A utility function used by library components to decide how to share stubs
+	 * with other machines.<br>
+	 * <br>
+	 * Given three machines A, B and C, and supposing that they are as follows:<br>
+	 * - A is the remote machine connected to this handler<br>
+	 * - B is the local machine<br>
+	 * - C is another machine who should receive from B a stub that refers to a
+	 * remote object on A<br>
+	 * <br>
+	 * this function determines if stubs on B connected to A are really shareable
+	 * with C. A stub is shareable by B when it can be serialized and reconstructed
+	 * on C maintaining a direct connection to A, the original remote machine. This
+	 * condition is possible when A has an active server listener enabled on its
+	 * registry. In this case when C receive the stub from B, it creates a new
+	 * direct connection to A. If A has no listener currently active, then its
+	 * remote listener port results to be <= 0 and the stubs that originated on that
+	 * machine must be proxyfied when they are sent from B to C, that is they must
+	 * be published on the registry of B and stubbed on C. In this case the stub of
+	 * A on B becomes itself a remote object whose stub is sent to C. So this policy
+	 * allows to "share" stubs by using this routing mechanism of the remote
+	 * invocation from C to A through B (truly, the stub on C is a new totally
+	 * different object respect to the stub on B, but this fact is transparent to
+	 * the developer).
+	 * 
+	 * @return
+	 */
+	boolean areStubsShareable() {
+		return remotePort > 0;
 	}
 
 	/**
@@ -393,10 +388,16 @@ public final class RmiHandler {
 		handshake(output, input);
 
 		outputStream = new RmiObjectOutputStream(output, rmiRegistry);
-		outputStream.flush();
-		inputStream = new RmiObjectInputStream(input, rmiRegistry, inetSocketAddress,
-				rmiRegistry.getClassLoaderFactory());
+		outputStream.flush(); // flushes ObjectOutputStream header
+		inputStream = new RmiObjectInputStream(input, this, inetSocketAddress, rmiRegistry.getClassLoaderFactory());
+	}
 
+	private boolean started = false;
+
+	synchronized void start() {
+		if (started)
+			return;
+		started = true;
 		receiver.setDaemon(true);
 		transmitter.setDaemon(true);
 		receiver.start();
@@ -404,55 +405,103 @@ public final class RmiHandler {
 	}
 
 	/**
-	 * Gets a stub for the specified object identifier representing a remote object
-	 * on the remote machine. This method performs a request to the remote machine
-	 * to get the remote interfaces of the remote object, then creates its stub. All
-	 * the remote interfaces of the remote object must be visible by the default
-	 * class loader and they must be known by the local runtime.
+	 * Executes the handshake with the remote {@link RmiHandler}. During the
+	 * handshake pahase the handlers exchange the registry keys, the registry
+	 * listener port and the authentication information. This function act the
+	 * handshake and validate the authentication of the remote handler on the local
+	 * registry. It also ensures that authentication was successful on the remote
+	 * side.
 	 * 
-	 * @param objectId the object identifier
-	 * @param <T>      the stub interface type
-	 * @return A dynamic proxy object that represents the remote instance. It is an
-	 *         instance for the specified stub interface
+	 * @throws IOException                   if an I/O error occurs
+	 * @throws LocalAuthenticationException  if the local {@link RmiHandler} cannot
+	 *                                       authenticate the remote one
+	 * @throws RemoteAuthenticationException if the remote {@link RmiHandler} cannot
+	 *                                       authenticate the local one
 	 */
-	public Object getStub(String objectId) throws UnknownHostException, IOException, InterruptedException {
+	private void handshake(OutputStream output, InputStream input)
+			throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
+		DataOutputStream outputStream = new DataOutputStream(output);
+		DataInputStream inputStream = new DataInputStream(input);
 
-		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
-		putHandle(msg);
-		msg.awaitResult();
+		// checks that on the other side of the connection there is a handler that uses
+		// the same registry of this one
+		outputStream.writeUTF(rmiRegistry.registryKey);
+		outputStream.writeInt(rmiRegistry.getListenerPort());
+		outputStream.flush();
 
-		if (msg.interfaces == null || msg.interfaces.length == 0 || disposed)
-			throw new IOException("RmiHandler has been disposed");
+		remoteRegistryKey = inputStream.readUTF();
+		remotePort = inputStream.readInt();
 
-		return getStub(objectId, msg.interfaces);
+		if (Debug.DEBUG)
+			System.out.println("[new handler] remoteAddress=" + socket.getInetAddress().getHostAddress()
+					+ ", remotePort=" + remotePort);
+
+		if (remotePort != 0)
+			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), remotePort);
+		else
+			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
+
+		if (remoteRegistryKey.equals(rmiRegistry.registryKey) && socket.getInetAddress().getCanonicalHostName()
+				.equals(InetAddress.getLocalHost().getCanonicalHostName())) {
+			sameRegistryAuthentication = true;
+			outputStream.writeBoolean(true);
+			outputStream.flush();
+		} else {
+			sameRegistryAuthentication = false;
+			outputStream.writeBoolean(false);
+			outputStream.flush();
+		}
+
+		if (inputStream.readBoolean()) // the remote handler recognized the registry key
+			return;
+
+		// if on the other side there is not the same registry of this handler, do
+		// normal authentication
+		outputStream.writeUTF(authIdentifier);
+		outputStream.writeUTF(authPassphrase);
+		outputStream.flush();
+
+		String authPass;
+		try {
+			remoteAuthIdentifier = inputStream.readUTF();
+			authPass = inputStream.readUTF();
+		} catch (Exception e) {
+			e.printStackTrace();
+			try {
+				outputStream.writeBoolean(false);
+				outputStream.flush();
+			} catch (IOException e1) {
+			}
+			throw new LocalAuthenticationException();
+		}
+
+		if (rmiRegistry.getAuthenticator() == null
+				|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
+			try {
+				outputStream.writeBoolean(true);
+				outputStream.flush();
+			} catch (IOException e1) {
+			}
+		} else {
+			try {
+				outputStream.writeBoolean(false);
+				outputStream.flush();
+			} catch (IOException e1) {
+			}
+			throw new LocalAuthenticationException();
+		}
+
+		boolean authResult = inputStream.readBoolean();
+
+		if (!authResult)
+			throw new RemoteAuthenticationException();
 	}
 
 	/**
-	 * Gets a stub for the specified object identifier respect to the specified
-	 * interfaces, representing a remote object on the remote machine. This method
-	 * performs no network operation, just creates the stub. All the interfaces
-	 * passed must be visible by the class loader of the first interface.
+	 * Gets the key of the remote RMI registry
 	 * 
-	 * @param objectId       the object identifier
-	 * @param stubInterfaces the interface whose methods must be stubbed, that is
-	 *                       the interface used to access the remote object
-	 *                       operations
-	 * @param <T>            the stub interface type
-	 * @return A dynamic proxy object that represents the remote instance. It is an
-	 *         instance for the specified stub interface
+	 * @return the key of the remote RMI registry
 	 */
-	public Object getStub(String objectId, Class<?>... stubInterfaces) {
-		if (disposed)
-			throw new IllegalStateException("This RmiHandler has been disposed");
-		if (stubInterfaces.length == 0)
-			throw new IllegalArgumentException("No interface has been passed");
-
-		Object stub;
-		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
-				new RemoteInvocationHandler(objectId, this));
-		return stub;
-	}
-
 	String getRemoteRegistryKey() {
 		return remoteRegistryKey;
 	}
@@ -568,7 +617,7 @@ public final class RmiHandler {
 				}
 			} catch (IOException | InterruptedException e) { // something gone wrong, destroy the handler
 				Exception exception = e;
-				if (RmiRegistry.DEBUG) {
+				if (Debug.DEBUG) {
 					System.out.println("[RmiHandler.transmitter] transmitter thrown the following exception:");
 					exception.printStackTrace();
 				}
@@ -613,7 +662,7 @@ public final class RmiHandler {
 					try {
 						rmiMessage = (RmiMessage) (inputStream.readUnshared());
 					} catch (Exception e) {
-						if (RmiRegistry.DEBUG) {
+						if (Debug.DEBUG) {
 							System.out.println("[RmiHandler.receiver] Exception while receiving RMI message: " + e);
 							e.printStackTrace();
 						}
@@ -684,6 +733,7 @@ public final class RmiHandler {
 								}
 
 							});
+							delegated.setName("RmiHandler.ReceiverThread.delegated");
 							delegated.start();
 
 						} else {
@@ -752,7 +802,7 @@ public final class RmiHandler {
 
 				}
 			} catch (Exception e) { // something gone wrong, destroy this handler and dispose it
-				if (RmiRegistry.DEBUG) {
+				if (Debug.DEBUG) {
 					System.out.println("[RmiHandler.receiver] receiver thrown the following exception:");
 					e.printStackTrace();
 				}
