@@ -29,12 +29,16 @@ import javax.naming.OperationNotSupportedException;
 /**
  * The instances of this class contain only an object identifier that references
  * a remote object on the local machine. The instances of this class are created
- * only to be sent on the network, and are associated with dynamic poxies that
+ * only to be sent on the network, and are associated to dynamic poxies that
  * replace remote objects on the local machine during serialization. On the
  * other side, these proxies are replaced during deserialization with new stubs
- * that references the remote objects that have been replaced during
- * serialization. In few words, this class allows to implement the deep remote
- * referencing mechanism.
+ * that reference the remote objects associated to the objectId in the
+ * ReferenceInvocationHandler-s that have been replaced during
+ * serialization.<br>
+ * <br>
+ * In few words, this class allows to implement the deep remote referencing
+ * mechanism, that consist of replacing local references to remote objects with
+ * their stubs during serialization.
  * 
  * @author Salvatore Giampa'
  *

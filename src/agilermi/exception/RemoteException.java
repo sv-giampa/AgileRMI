@@ -17,13 +17,13 @@
 
 package agilermi.exception;
 
-import agilermi.core.RmiHandler;
+import agilermi.core.RMIHandler;
 
 /**
- * This exception is thrown when a {@link RmiHandler} instance has been disposed
+ * This exception is thrown when a {@link RMIHandler} instance has been disposed
  * before or during an invocation. This exception is received by the attached
- * failure observers when the {@link RmiHandler#dispose()} method has been
- * called. Subclasses of this exception represents more specific errors.
+ * failure observers when the {@link RMIHandler#dispose(boolean)} method has
+ * been called. Subclasses of this exception represents more specific errors.
  * 
  * @author Salvatore Giampa'
  *
@@ -32,7 +32,7 @@ public class RemoteException extends Exception {
 	private static final long serialVersionUID = 3064594603835597427L;
 
 	public RemoteException() {
-		super("The RmiHandler has been disposed");
+		super("The RMIHandler has been disposed");
 	}
 
 	public RemoteException(String message) {

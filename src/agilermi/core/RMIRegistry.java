@@ -41,19 +41,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 
-import agilermi.authentication.Authenticator;
+import agilermi.authentication.RMIAuthenticator;
 import agilermi.codemobility.ClassLoaderFactory;
 import agilermi.codemobility.URLClassLoaderFactory;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
-import agilermi.configuration.FaultHandler;
+import agilermi.configuration.RMIFaultHandler;
 import agilermi.configuration.Remote;
 import agilermi.exception.RemoteException;
 
@@ -61,18 +58,18 @@ import agilermi.exception.RemoteException;
  * Defines a class that accepts new TCP connections over a port of the local
  * machine and automatically creates and manages the object sockets to export
  * remote objects. It integrates a registry of exported objects. The instances
- * of this class can be shared among more than one RmiHandler to obtain a
+ * of this class can be shared among more than one RMIHandler to obtain a
  * multi-peer interoperability. This class can be instantiated through its
  * {@link Builder} whose instances are constructed by the {@link #builder()}
  * factory method.<br>
  * <br>
  * Instantiation example:<br>
- * <code>RmiRegistry registry = RmiRegistry.builder().build();</code>
+ * <code>RMIRegistry registry = RMIRegistry.builder().build();</code>
  * 
  * @author Salvatore Giampa'
  *
  */
-public final class RmiRegistry {
+public final class RMIRegistry {
 
 	// executor service used to move network operations on other threads
 	ScheduledExecutorService executorService = Executors
@@ -81,12 +78,12 @@ public final class RmiRegistry {
 				public Thread newThread(Runnable task) {
 					Thread th = new Thread(task);
 					th.setDaemon(true);
-					th.setName("RmiRegistry.executorService");
+					th.setName("RMIRegistry.executorService");
 					return th;
 				}
 			});
 
-	// identifies the current instance of RmiRegistry. It serves to avoid loop-back
+	// identifies the current instance of RMIRegistry. It serves to avoid loop-back
 	// connections and to replace remote pointer that point to an object on this
 	// same registry with their local instance
 	final String registryKey;
@@ -97,7 +94,7 @@ public final class RmiRegistry {
 	private Object lock = new Object();
 
 	// codebases for code mobility
-	RmiClassLoader rmiClassLoader;
+	RMIClassLoader rMIClassLoader;
 
 	private boolean codeMobilityEnabled = false;
 
@@ -108,7 +105,7 @@ public final class RmiRegistry {
 	private Thread listener;
 
 	// the peer that are currently online
-	private Map<InetSocketAddress, List<RmiHandler>> handlers = new HashMap<>();
+	private Map<InetSocketAddress, List<RMIHandler>> handlers = new HashMap<>();
 
 	// port of the TCP listener
 	private int listenerPort;
@@ -118,7 +115,7 @@ public final class RmiRegistry {
 	private SocketFactory socketFactory;
 
 	// failure observers
-	private Set<FaultHandler> faultHandlers = new HashSet<>();
+	private Set<RMIFaultHandler> rMIFaultHandlers = new HashSet<>();
 
 	// enable the stubs to throw a remote exception when invoked after a connection
 	// failure
@@ -148,20 +145,20 @@ public final class RmiRegistry {
 
 	/**
 	 * Defines the main thread that accepts new incoming connections and creates
-	 * {@link RmiHandler} objects
+	 * {@link RMIHandler} objects
 	 */
 	private Runnable listenerTask = new Runnable() {
 		@Override
 		public void run() {
-			Thread.currentThread().setName("RmiRegistry.listenerTask");
+			Thread.currentThread().setName("RMIRegistry.listenerTask");
 			while (listener != null && !listener.isInterrupted())
 				try {
 					Socket socket = serverSocket.accept();
-					RmiHandler rmiHandler = new RmiHandler(socket, RmiRegistry.this, protocolEndpointFactory);
-					if (!handlers.containsKey(rmiHandler.getInetSocketAddress()))
-						handlers.put(rmiHandler.getInetSocketAddress(), new ArrayList<>(1));
-					handlers.get(rmiHandler.getInetSocketAddress()).add(rmiHandler);
-					rmiHandler.start();
+					RMIHandler rMIHandler = new RMIHandler(socket, RMIRegistry.this, protocolEndpointFactory);
+					if (!handlers.containsKey(rMIHandler.getInetSocketAddress()))
+						handlers.put(rMIHandler.getInetSocketAddress(), new ArrayList<>(1));
+					handlers.get(rMIHandler.getInetSocketAddress()).add(rMIHandler);
+					rMIHandler.start();
 				} catch (IOException e) {
 					// e.printStackTrace();
 				}
@@ -171,22 +168,22 @@ public final class RmiRegistry {
 	private boolean finalized = false;
 
 	/**
-	 * Defines the {@link FaultHandler} used to manage the peer which closed the
+	 * Defines the {@link RMIFaultHandler} used to manage the peer which closed the
 	 * connection
 	 */
-	FaultHandler faultHandler = new FaultHandler() {
+	RMIFaultHandler rMIFaultHandler = new RMIFaultHandler() {
 		@Override
-		public void onFault(RmiHandler rmiHandler, Exception exception) {
+		public void onFault(RMIHandler rMIHandler, Exception exception) {
 			if (finalized)
 				return;
-			List<RmiHandler> list = handlers.get(rmiHandler.getInetSocketAddress());
+			List<RMIHandler> list = handlers.get(rMIHandler.getInetSocketAddress());
 			if (list != null)
-				list.remove(rmiHandler);
+				list.remove(rMIHandler);
 		}
 	};
 
-	// authenticator objects that authenticates and authorize users
-	private Authenticator authenticator;
+	// rMIAuthenticator objects that authenticates and authorize users
+	private RMIAuthenticator rMIAuthenticator;
 
 	/**
 	 * Package-level method to get authentication relative to a remote process.
@@ -226,20 +223,20 @@ public final class RmiRegistry {
 	}
 
 	/**
-	 * Creates a new {@link RmiRegistry.Builder} instance, used to configure and
-	 * start a new {@link RmiRegistry} instance.
+	 * Creates a new {@link RMIRegistry.Builder} instance, used to configure and
+	 * start a new {@link RMIRegistry} instance.
 	 * 
-	 * @return a new {@link RmiRegistry.Builder} instance
+	 * @return a new {@link RMIRegistry.Builder} instance
 	 */
 	public static Builder builder() {
 		return new Builder();
 	}
 
 	/**
-	 * Builder for {@link RmiRegistry}. A new instance of this class can be returned
-	 * by the {@link RmiRegistry#builder()} static method. A new instance of this
-	 * class wraps all the defaults for {@link RmiRegistry} and allows to modify
-	 * them. When the configuration has been terminated, a new {@link RmiRegistry}
+	 * Builder for {@link RMIRegistry}. A new instance of this class can be returned
+	 * by the {@link RMIRegistry#builder()} static method. A new instance of this
+	 * class wraps all the defaults for {@link RMIRegistry} and allows to modify
+	 * them. When the configuration has been terminated, a new {@link RMIRegistry}
 	 * instance can be obtained by the {@link Builder#build()} method.
 	 * 
 	 * defaults:<br>
@@ -251,7 +248,7 @@ public final class RmiRegistry {
 	 * <li>{@link SocketFactory}: null (that is
 	 * {@link SocketFactory#getDefault()})</li>
 	 * <li>{@link ProtocolEndpointFactory}: null</li>
-	 * <li>{@link Authenticator}: null</li>
+	 * <li>{@link RMIAuthenticator}: null</li>
 	 * <li>authentication Identifier: null (that is guest identifier)</li>
 	 * <li>authentication pass-phrase: null (that is guest pass-phrase)</li>
 	 * </ul>
@@ -270,7 +267,7 @@ public final class RmiRegistry {
 		private ProtocolEndpointFactory protocolEndpointFactory;
 
 		// authentication
-		private Authenticator authenticator;
+		private RMIAuthenticator rMIAuthenticator;
 
 		// code mobility
 		private Set<URL> codebases = new HashSet<>();
@@ -311,34 +308,38 @@ public final class RmiRegistry {
 		 * Utility method to add codebases at building time. Codebases can be added and
 		 * removed after the registry construction, too.
 		 * 
-		 * @param url the url to the codebase
+		 * @param urls the urls of the codebases
 		 * @return this builder
 		 */
-		public void addCodebases(Iterable<URL> urls) {
+		public Builder addCodebases(Iterable<URL> urls) {
 			if (urls == null)
-				return;
+				return this;
 			for (URL url : urls)
 				codebases.add(url);
+			return this;
 		}
 
 		/**
 		 * Utility method to add codebases at building time. Codebases can be added and
 		 * removed after the registry construction, too.
 		 * 
-		 * @param url the url to the codebase
+		 * @param urls the urls of the codebases
 		 * @return this builder
 		 */
-		public void addCodebases(URL... urls) {
+		public Builder addCodebases(URL... urls) {
 			if (urls == null)
-				return;
+				return this;
 			for (URL url : urls)
 				codebases.add(url);
+			return this;
 		}
 
 		/**
 		 * Set the class loader factory used by this registry to decode remote classes
 		 * when code mobility is enabled. It is necessary on some platforms that uses a
 		 * different implementation of the Java Virtual Machine.
+		 * 
+		 * @param classLoaderFactory the factory to use
 		 * 
 		 * @return this builder
 		 */
@@ -360,14 +361,14 @@ public final class RmiRegistry {
 		}
 
 		/**
-		 * Set an {@link Authenticator} object that intercept authentication and
+		 * Set an {@link RMIAuthenticator} object that intercept authentication and
 		 * authorization requests from remote machines.
 		 * 
-		 * @param authenticator the {@link Authenticator} instance to use
+		 * @param rMIAuthenticator the {@link RMIAuthenticator} instance to use
 		 * @return this builder
 		 */
-		public Builder setAuthenticator(Authenticator authenticator) {
-			this.authenticator = authenticator;
+		public Builder setAuthenticator(RMIAuthenticator rMIAuthenticator) {
+			this.rMIAuthenticator = rMIAuthenticator;
 			return this;
 		}
 
@@ -403,19 +404,19 @@ public final class RmiRegistry {
 		}
 
 		/**
-		 * Builds the RmiRegistry. After this call, the builder will not reset.
+		 * Builds the RMIRegistry. After this call, the builder will not reset.
 		 * 
-		 * @return the built {@link RmiRegistry} instance
+		 * @return the built {@link RMIRegistry} instance
 		 */
-		public RmiRegistry build() {
-			RmiRegistry rmiRegistry = new RmiRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
-					authenticator, codeMobilityEnabled, codebases, classLoaderFactory, dgcLeaseValue);
-			return rmiRegistry;
+		public RMIRegistry build() {
+			RMIRegistry rMIRegistry = new RMIRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
+					rMIAuthenticator, codeMobilityEnabled, codebases, classLoaderFactory, dgcLeaseValue);
+			return rMIRegistry;
 		}
 	}
 
 	/**
-	 * Creates a new {@link RmiRegistry} with the given ServerSocketFactory,
+	 * Creates a new {@link RMIRegistry} with the given ServerSocketFactory,
 	 * SocketFactory and ProtocolEndpointFactory instances, without starting the
 	 * connection listener.
 	 * 
@@ -426,20 +427,20 @@ public final class RmiRegistry {
 	 * @param protocolEndpointFactory the {@link ProtocolEndpointFactory} instance
 	 *                                that gives the streams in which the underlying
 	 *                                communication streams will be wrapped in
-	 * @param authenticator           an {@link Authenticator} instance that allows
-	 *                                to authenticate and authorize users of
+	 * @param rMIAuthenticator        an {@link RMIAuthenticator} instance that
+	 *                                allows to authenticate and authorize users of
 	 *                                incoming connection. For example, this
 	 *                                instance can be an adapter that access a
 	 *                                database or another pre-made authentication
 	 *                                system.
 	 * @param classLoaderFactory2
 	 * 
-	 * @see RmiRegistry.Builder
-	 * @see RmiRegistry#builder()
+	 * @see RMIRegistry.Builder
+	 * @see RMIRegistry#builder()
 	 */
-	private RmiRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			ProtocolEndpointFactory protocolEndpointFactory, Authenticator authenticator, boolean codeMobilityEnabled,
-			Set<URL> codebases, ClassLoaderFactory classLoaderFactory, int dgcLeaseValue) {
+	private RMIRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
+			ProtocolEndpointFactory protocolEndpointFactory, RMIAuthenticator rMIAuthenticator,
+			boolean codeMobilityEnabled, Set<URL> codebases, ClassLoaderFactory classLoaderFactory, int dgcLeaseValue) {
 		if (serverSocketFactory == null)
 			serverSocketFactory = ServerSocketFactory.getDefault();
 		if (socketFactory == null)
@@ -453,78 +454,13 @@ public final class RmiRegistry {
 		this.serverSocketFactory = serverSocketFactory;
 		this.socketFactory = socketFactory;
 		this.protocolEndpointFactory = protocolEndpointFactory;
-		this.authenticator = authenticator;
+		this.rMIAuthenticator = rMIAuthenticator;
 		this.codeMobilityEnabled = codeMobilityEnabled;
 		if (classLoaderFactory == null)
 			classLoaderFactory = new URLClassLoaderFactory();
 		this.classLoaderFactory = classLoaderFactory;
-		this.rmiClassLoader = new RmiClassLoader(codebases, classLoaderFactory);
+		this.rMIClassLoader = new RMIClassLoader(codebases, classLoaderFactory);
 		this.dgcLeaseValue = dgcLeaseValue;
-	}
-
-	private Thread locker;
-	private Object owner;
-	private Lock modificationLock = new ReentrantLock();
-	private Condition modificationCondition = modificationLock.newCondition();
-
-	public void disableModification(Object owner) {
-		modificationLock.lock();
-		try {
-			if (this.owner == null) {
-				this.owner = owner;
-			} else if (this.owner != owner) {
-				throw new IllegalStateException("This RMI registry is locked by another owner.");
-			}
-		} finally {
-			modificationLock.unlock();
-		}
-	}
-
-	public void enableModification(Object owner) {
-		modificationLock.lock();
-		try {
-			if (this.owner == owner) {
-				this.owner = null;
-				locker = null;
-				modificationCondition.signalAll();
-			}
-		} finally {
-			modificationLock.unlock();
-		}
-	}
-
-	public void lock(Object owner) {
-		modificationLock.lock();
-		try {
-			if (this.owner == owner) {
-				while (locker != null)
-					modificationCondition.await();
-				locker = Thread.currentThread();
-			} else if (this.owner == null) {
-				locker = Thread.currentThread();
-			} else
-				throw new IllegalStateException();
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-			return;
-		} finally {
-			modificationLock.unlock();
-		}
-	}
-
-	public void unlock() {
-		if (locker == null)
-			return;
-		if (Thread.currentThread() == locker) {
-			modificationLock.lock();
-			try {
-				modificationCondition.signalAll();
-				locker = null;
-			} finally {
-				modificationLock.unlock();
-			}
-		} else
-			throw new IllegalStateException("This registry is currently locked by another owner.");
 	}
 
 	/**
@@ -554,82 +490,67 @@ public final class RmiRegistry {
 	 * @param dgcLeaseValue the lease timeout value in milliseconds
 	 */
 	public void setDgcLeaseValue(int dgcLeaseValue) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-
-			this.dgcLeaseValue = dgcLeaseValue;
-		} finally {
-			modificationLock.unlock();
-		}
-	}
-
-	public Set<URL> getCodebases() {
-		return rmiClassLoader.getCodebases();
-	}
-
-	public void addCodebases(Iterable<URL> urls) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			if (urls == null)
-				return;
-			for (URL url : urls)
-				rmiClassLoader.addCodebase(url);
-		} finally {
-			modificationLock.unlock();
-		}
-	}
-
-	public void addCodebases(URL... urls) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			if (urls == null)
-				return;
-			for (URL url : urls)
-				rmiClassLoader.addCodebase(url);
-		} finally {
-			modificationLock.unlock();
-		}
-	}
-
-	public void addCodebase(URL url) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			if (url == null)
-				return;
-			rmiClassLoader.addCodebase(url);
-		} finally {
-			modificationLock.unlock();
-		}
-	}
-
-	public void removeCodebase(URL url) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			rmiClassLoader.removeCodebase(url);
-		} finally {
-			modificationLock.unlock();
-		}
+		this.dgcLeaseValue = dgcLeaseValue;
 	}
 
 	/**
-	 * Returns the {@link RmiClassLoader} instance used to load classes from remote
+	 * This will return all the static codebases and all the received codebases
+	 * whose classes are currently instantiated.
+	 * 
+	 * @return all actually used codebases
+	 */
+	public Set<URL> getCodebases() {
+		return rMIClassLoader.getCodebases();
+	}
+
+	/**
+	 * Add new static codebases that will be sent to the other machines.
+	 * 
+	 * @param urls the codebases to add
+	 */
+	public void addCodebases(Iterable<URL> urls) {
+		if (urls == null)
+			return;
+		for (URL url : urls)
+			rMIClassLoader.addCodebase(url);
+	}
+
+	/**
+	 * Add new static codebases that will be sent to the other machines.
+	 * 
+	 * @param urls the codebases to add
+	 */
+	public void addCodebases(URL... urls) {
+		if (urls == null)
+			return;
+		for (URL url : urls)
+			rMIClassLoader.addCodebase(url);
+	}
+
+	/**
+	 * Add a new static codebase that will be sent to the other machines.
+	 * 
+	 * @param url the codebase to add
+	 */
+	public void addCodebase(URL url) {
+		if (url == null)
+			return;
+		rMIClassLoader.addCodebase(url);
+	}
+
+	public void removeCodebase(URL url) {
+		rMIClassLoader.removeCodebase(url);
+	}
+
+	/**
+	 * Returns the {@link RMIClassLoader} instance used to load classes from remote
 	 * codebase. This instance can be used to load specific classes that are not in
 	 * the current classpath.
 	 * 
-	 * @return the {@link RmiClassLoader} instance used by this registry
+	 * @return the {@link RMIClassLoader} instance used by this registry
 	 */
-	public RmiClassLoader getRmiClassLoader() {
-		return rmiClassLoader;
+	public RMIClassLoader getRmiClassLoader() {
+		return rMIClassLoader;
 	}
 
 	/**
@@ -649,14 +570,7 @@ public final class RmiRegistry {
 	 *                            remote codebases. Set it to false otherwise.
 	 */
 	public void setCodeMobilityEnabled(boolean codeMobilityEnabled) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			this.codeMobilityEnabled = codeMobilityEnabled;
-		} finally {
-			modificationLock.unlock();
-		}
+		this.codeMobilityEnabled = codeMobilityEnabled;
 	}
 
 	/**
@@ -668,21 +582,14 @@ public final class RmiRegistry {
 	 * @param authPassphrase the authentication pass-phrase
 	 */
 	public void setAuthentication(String host, int port, String authId, String authPassphrase) {
-		modificationLock.lock();
 		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			try {
-				InetAddress address = InetAddress.getByName(host);
-				host = address.getCanonicalHostName();
-			} catch (UnknownHostException e) {
-			}
-			String key = host + ":" + port;
-			String[] auth = new String[] { authId, authPassphrase };
-			authenticationMap.put(key, auth);
-		} finally {
-			modificationLock.unlock();
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
 		}
+		String key = host + ":" + port;
+		String[] auth = new String[] { authId, authPassphrase };
+		authenticationMap.put(key, auth);
 	}
 
 	/**
@@ -692,20 +599,13 @@ public final class RmiRegistry {
 	 * @param port the remote port
 	 */
 	public void removeAuthentication(String host, int port) {
-		modificationLock.lock();
 		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			try {
-				InetAddress address = InetAddress.getByName(host);
-				host = address.getCanonicalHostName();
-			} catch (UnknownHostException e) {
-			}
-			String key = host + ":" + port;
-			authenticationMap.remove(key);
-		} finally {
-			modificationLock.unlock();
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
 		}
+		String key = host + ":" + port;
+		authenticationMap.remove(key);
 	}
 
 	/**
@@ -724,7 +624,7 @@ public final class RmiRegistry {
 	 * referenced
 	 * 
 	 * @param signalHandlersFailures set to true if you want all the
-	 *                               {@link RmiHandler} instances created by this
+	 *                               {@link RMIHandler} instances created by this
 	 *                               registry to send a signal to the failure
 	 *                               observers
 	 */
@@ -734,8 +634,8 @@ public final class RmiRegistry {
 
 			finalized = true;
 			for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext(); it.remove())
-				for (RmiHandler rmiHandler : handlers.get(it.next()))
-					rmiHandler.dispose(signalHandlersFailures);
+				for (RMIHandler rMIHandler : handlers.get(it.next()))
+					rMIHandler.dispose(signalHandlersFailures);
 		}
 	}
 
@@ -757,22 +657,15 @@ public final class RmiRegistry {
 	 * @param multiConnectionMode true to enable, false to disable
 	 */
 	public void setMultiConnectionMode(boolean multiConnectionMode) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			this.multiConnectionMode = multiConnectionMode;
-		} finally {
-			modificationLock.unlock();
-		}
+		this.multiConnectionMode = multiConnectionMode;
 	}
 
 	/**
 	 * Gets the stub for the specified object identifier on the specified host
-	 * respect to the given interface. This method creates a new {@link RmiHandler}
+	 * respect to the given interface. This method creates a new {@link RMIHandler}
 	 * if necessary to communicate with the specified host. The new
-	 * {@link RmiHandler} can be obtained by calling the
-	 * {@link #getRmiHandler(String, int)} method.
+	 * {@link RMIHandler} can be obtained by calling the
+	 * {@link #getRMIHandler(String, int)} method.
 	 * 
 	 * @param address        the host address
 	 * @param port           the host port
@@ -784,16 +677,16 @@ public final class RmiRegistry {
 	 */
 	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces) throws IOException {
 		synchronized (lock) {
-			return getRmiHandler(address, port, multiConnectionMode).getStub(objectId, stubInterfaces);
+			return getRMIHandler(address, port, multiConnectionMode).getStub(objectId, stubInterfaces);
 		}
 	}
 
 	/**
 	 * Gets the stub for the specified object identifier on the specified host
-	 * respect to the given interface. This method creates a new {@link RmiHandler}
+	 * respect to the given interface. This method creates a new {@link RMIHandler}
 	 * if necessary to communicate with the specified host. The new
-	 * {@link RmiHandler} can be obtained by calling the
-	 * {@link #getRmiHandler(String, int)} method.
+	 * {@link RMIHandler} can be obtained by calling the
+	 * {@link #getRMIHandler(String, int)} method.
 	 * 
 	 * @param address        the host address
 	 * @param port           the host port
@@ -809,7 +702,7 @@ public final class RmiRegistry {
 	public Object getStub(String address, int port, String objectId, boolean newConnection, Class<?>... stubInterfaces)
 			throws IOException {
 		synchronized (lock) {
-			return getRmiHandler(address, port, newConnection).getStub(objectId, stubInterfaces);
+			return getRMIHandler(address, port, newConnection).getStub(objectId, stubInterfaces);
 		}
 	}
 
@@ -825,6 +718,11 @@ public final class RmiRegistry {
 	 * @param objectId the object identifier
 	 * @return A dynamic proxy object that represents the remote instance. It is an
 	 *         instance for the specified stub interface
+	 * 
+	 * @throws UnknownHostException if the host cannot be resolved
+	 * @throws IOException          if an I/O error occurs
+	 * @throws InterruptedException if the current thread is iterrupted during
+	 *                              operation
 	 */
 	public Object getStub(String address, int port, String objectId)
 			throws UnknownHostException, IOException, InterruptedException {
@@ -838,25 +736,30 @@ public final class RmiRegistry {
 	 * the remote interfaces of the remote object must be visible by the default
 	 * class loader and they must be known by the local runtime.
 	 * 
-	 * @param address       the host address
-	 * @param port          the host port
-	 * @param objectId      the object identifier
-	 * @param newConnection always create a new handler without getting an already
-	 *                      existing one. This parameter overrides the
-	 *                      {@link #isMultiConnectionMode} attribute
+	 * @param address          the host address
+	 * @param port             the host port
+	 * @param objectId         the object identifier
+	 * @param createNewHandler always create a new handler without getting an
+	 *                         already existing one. This parameter overrides the
+	 *                         {@link #isMultiConnectionMode} attribute
 	 * @return A dynamic proxy object that represents the remote instance. It is an
 	 *         instance for the specified stub interface
+	 * 
+	 * @throws UnknownHostException if the host cannot be resolved
+	 * @throws IOException          if an I/O error occurs
+	 * @throws InterruptedException if the current thread is iterrupted during
+	 *                              operation
 	 */
 	public Object getStub(String address, int port, String objectId, boolean createNewHandler)
 			throws UnknownHostException, IOException, InterruptedException {
 
-		RmiHandler rmiHandler = getRmiHandler(address, port, createNewHandler);
+		RMIHandler rmiHandler = getRMIHandler(address, port, createNewHandler);
 		return rmiHandler.getStub(objectId);
 	}
 
 	/**
-	 * Gets an {@link RmiHandler} instance for the specified host. If it has not
-	 * been created, creates it. If some RmiHandler already exists, gets one of
+	 * Gets an {@link RMIHandler} instance for the specified host. If it has not
+	 * been created, creates it. If some RMIHandler already exists, gets one of
 	 * them.
 	 * 
 	 * @param host the host address
@@ -865,12 +768,12 @@ public final class RmiRegistry {
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
 	 */
-	public RmiHandler getRmiHandler(String host, int port) throws IOException {
-		return getRmiHandler(host, port, false);
+	public RMIHandler getRMIHandler(String host, int port) throws IOException {
+		return getRMIHandler(host, port, false);
 	}
 
 	/**
-	 * Gets an {@link RmiHandler} instance for the specified host. If it has not
+	 * Gets an {@link RMIHandler} instance for the specified host. If it has not
 	 * been created, creates it.
 	 * 
 	 * @param host          the host address
@@ -881,26 +784,26 @@ public final class RmiRegistry {
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occurs
 	 */
-	public RmiHandler getRmiHandler(String host, int port, boolean newConnection) throws IOException {
-		Callable<RmiHandler> callable = () -> {
+	public RMIHandler getRMIHandler(String host, int port, boolean newConnection) throws IOException {
+		Callable<RMIHandler> callable = () -> {
 			synchronized (handlers) {
 				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
 				if (!handlers.containsKey(inetAddress))
 					handlers.put(inetAddress, new ArrayList<>(1));
-				List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
-				RmiHandler rmiHandler = null;
-				if (rmiHandlers.size() == 0 || newConnection) {
-					rmiHandler = new RmiHandler(socketFactory.createSocket(host, port), RmiRegistry.this,
+				List<RMIHandler> rMIHandlers = handlers.get(inetAddress);
+				RMIHandler rMIHandler = null;
+				if (rMIHandlers.size() == 0 || newConnection) {
+					rMIHandler = new RMIHandler(socketFactory.createSocket(host, port), RMIRegistry.this,
 							protocolEndpointFactory);
-					rmiHandlers.add(rmiHandler);
-					rmiHandler.start();
+					rMIHandlers.add(rMIHandler);
+					rMIHandler.start();
 				}
-				rmiHandler = rmiHandlers.get(0);
-				return rmiHandler;
+				rMIHandler = rMIHandlers.get(0);
+				return rMIHandler;
 			}
 		};
 
-		Future<RmiHandler> future = executorService.submit(callable);
+		Future<RMIHandler> future = executorService.submit(callable);
 		try {
 			return future.get();
 		} catch (InterruptedException e) {
@@ -916,11 +819,11 @@ public final class RmiRegistry {
 				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
 				if (!handlers.containsKey(inetAddress))
 					return null;
-				List<RmiHandler> rmiHandlers = handlers.get(inetAddress);
-				for (RmiHandler hnd : rmiHandlers) {
+				List<RMIHandler> rMIHandlers = handlers.get(inetAddress);
+				for (RMIHandler hnd : rMIHandlers) {
 					hnd.dispose(true);
 				}
-				rmiHandlers.clear();
+				rMIHandlers.clear();
 			}
 			return null;
 		};
@@ -946,30 +849,23 @@ public final class RmiRegistry {
 	 * @throws IOException if I/O errors occur
 	 */
 	public void enableListener(int port, boolean daemon) throws IOException {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			Callable<Void> callable = () -> {
-				synchronized (serverSocketFactory) {
-					if (listener != null)
-						disableListener();
-					serverSocket = serverSocketFactory.createServerSocket(port);
-					this.listenerPort = serverSocket.getLocalPort();
-					listener = new Thread(listenerTask);
-					listener.setDaemon(daemon);
-					listener.start();
-				}
-				return null;
-			};
-			try {
-				executorService.submit(callable).get();
-			} catch (InterruptedException e) {
-			} catch (ExecutionException e) {
-				throw (IOException) e.getCause();
+		Callable<Void> callable = () -> {
+			synchronized (serverSocketFactory) {
+				if (listener != null)
+					disableListener();
+				serverSocket = serverSocketFactory.createServerSocket(port);
+				this.listenerPort = serverSocket.getLocalPort();
+				listener = new Thread(listenerTask);
+				listener.setDaemon(daemon);
+				listener.start();
 			}
-		} finally {
-			modificationLock.unlock();
+			return null;
+		};
+		try {
+			executorService.submit(callable).get();
+		} catch (InterruptedException e) {
+		} catch (ExecutionException e) {
+			throw (IOException) e.getCause();
 		}
 	}
 
@@ -978,33 +874,26 @@ public final class RmiRegistry {
 	 * accept new incoming connections, but does not close the current open ones.
 	 */
 	public void disableListener() {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			Callable<Void> callable = () -> {
-				synchronized (serverSocketFactory) {
-					if (listener == null)
-						return null;
+		Callable<Void> callable = () -> {
+			synchronized (serverSocketFactory) {
+				if (listener == null)
+					return null;
 
-					listener.interrupt();
-					listener = null;
-					try {
-						serverSocket.close();
-					} catch (IOException e) {
-						e.printStackTrace();
-					}
-					listenerPort = 0;
+				listener.interrupt();
+				listener = null;
+				try {
+					serverSocket.close();
+				} catch (IOException e) {
+					e.printStackTrace();
 				}
-				return null;
-			};
-			try {
-				executorService.submit(callable).get();
-			} catch (InterruptedException e) {
-			} catch (ExecutionException e) {
+				listenerPort = 0;
 			}
-		} finally {
-			modificationLock.unlock();
+			return null;
+		};
+		try {
+			executorService.submit(callable).get();
+		} catch (InterruptedException e) {
+		} catch (ExecutionException e) {
 		}
 	}
 
@@ -1018,34 +907,30 @@ public final class RmiRegistry {
 	}
 
 	/**
-	 * Gets the authenticator of this registry
+	 * Gets the rMIAuthenticator of this registry
 	 * 
-	 * @return the authenticator associated to this registry
+	 * @return the rMIAuthenticator associated to this registry
 	 */
-	public Authenticator getAuthenticator() {
-		return authenticator;
+	public RMIAuthenticator getAuthenticator() {
+		return rMIAuthenticator;
 	}
 
 	/**
 	 * Enables the stubs for remote objects to throw a {@link RemoteException} when
-	 * their {@link RmiHandler} will be disposed
+	 * their {@link RMIHandler} will be disposed
 	 * 
 	 * @param enable set this to true to enable the exception, set to false
 	 *               otherwise
 	 */
 	public void enableRemoteException(boolean enable) {
-		modificationLock.lock();
-		try {
-			if (owner != null && Thread.currentThread() != locker)
-				throw new IllegalStateException("The modifications to this RMI registry are locked.");
-			this.remoteExceptionEnabled = enable;
-		} finally {
-			modificationLock.unlock();
-		}
+		this.remoteExceptionEnabled = enable;
 	}
 
 	/**
-	 * Gets the enable status of the {@link RemoteException}
+	 * Gets the enable status of the {@link RemoteException}. If the
+	 * {@link RemoteException} is disabled, the stubs connected to a failed handler
+	 * will return from their invocation the default value for the return type (e.g.
+	 * null for objects, false for boolean, 0 for primitive numeric types, etc.)
 	 * 
 	 * @return true if {@link RemoteException} is enabled, false otherwise
 	 */
@@ -1151,24 +1036,24 @@ public final class RmiRegistry {
 	}
 
 	/**
-	 * Attach a {@link FaultHandler} object
+	 * Attach a {@link RMIFaultHandler} object
 	 * 
-	 * @param o the failure observer
+	 * @param o the fault handler
 	 */
-	public void attachFaultHandler(FaultHandler o) {
-		synchronized (faultHandlers) {
-			faultHandlers.add(o);
+	public void attachFaultHandler(RMIFaultHandler o) {
+		synchronized (rMIFaultHandlers) {
+			rMIFaultHandlers.add(o);
 		}
 	}
 
 	/**
-	 * Detach a {@link FaultHandler} object
+	 * Detach a {@link RMIFaultHandler} object
 	 * 
-	 * @param o the failure observer
+	 * @param o the fault handler
 	 */
-	public void detachFailureHandler(FaultHandler o) {
-		synchronized (faultHandlers) {
-			faultHandlers.remove(o);
+	public void detachFailureHandler(RMIFaultHandler o) {
+		synchronized (rMIFaultHandlers) {
+			rMIFaultHandlers.remove(o);
 		}
 	}
 
@@ -1224,7 +1109,7 @@ public final class RmiRegistry {
 
 	/**
 	 * Remove a automatic referencing mark for the interface. See the
-	 * {@link RmiRegistry#exportInterface(Class)} method. All the objects
+	 * {@link RMIRegistry#exportInterface(Class)} method. All the objects
 	 * automatically referenced until this call, remains published in the registry.
 	 * 
 	 * @param remoteIf the interface to unmark
@@ -1244,7 +1129,7 @@ public final class RmiRegistry {
 	 * extends the {@link Remote} interface or if it was exported or if it extends,
 	 * directly or indirectly, an interface that was exported on this registry to be
 	 * remote.<br>
-	 * See the {@link RmiRegistry#exportInterface(Class)} method.
+	 * See the {@link RMIRegistry#exportInterface(Class)} method.
 	 * 
 	 * @param remoteIf the interface to check
 	 * @return true if the interface is marked for automatic referencing, false
@@ -1323,17 +1208,17 @@ public final class RmiRegistry {
 	}
 
 	/**
-	 * Package-scoped. Operation used to broadcast a {@link RmiHandler} failure to
+	 * Package-scoped. Operation used to broadcast a {@link RMIHandler} failure to
 	 * the failure observers attached to this registry
 	 * 
-	 * @param rmiHandler the object peer that caused the failure
+	 * @param rMIHandler the object peer that caused the failure
 	 * @param exception  the exception thrown by the object peer
 	 */
-	void sendRmiHandlerFailure(RmiHandler rmiHandler, Exception exception) {
-		synchronized (faultHandlers) {
-			faultHandlers.forEach(o -> {
+	void sendRmiHandlerFailure(RMIHandler rMIHandler, Exception exception) {
+		synchronized (rMIFaultHandlers) {
+			rMIFaultHandlers.forEach(o -> {
 				try {
-					o.onFault(rmiHandler, exception);
+					o.onFault(rMIHandler, exception);
 				} catch (Throwable e) {
 					e.printStackTrace();
 				}

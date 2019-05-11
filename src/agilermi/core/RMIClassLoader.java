@@ -27,19 +27,19 @@ import java.util.WeakHashMap;
 import agilermi.codemobility.ClassLoaderFactory;
 
 /**
- * The instance of this class associated to a {@link RmiRegistry} can be used to
+ * The instance of this class associated to a {@link RMIRegistry} can be used to
  * load classes located on remote codebases.
  * 
  * @author Salvatore Giampa'
  *
  */
-public final class RmiClassLoader extends ClassLoader {
+public final class RMIClassLoader extends ClassLoader {
 	private int modificationNumber = 0;
 	private Map<URL, ClassLoader> staticCodebases = new HashMap<>();
 	private WeakHashMap<ClassLoader, URL> activeCodebases = new WeakHashMap<>();
 	private ClassLoaderFactory classLoaderFactory;
 
-	RmiClassLoader(Set<URL> staticCodebases, ClassLoaderFactory classLoaderFactory) {
+	RMIClassLoader(Set<URL> staticCodebases, ClassLoaderFactory classLoaderFactory) {
 		super(ClassLoader.getSystemClassLoader());
 		this.classLoaderFactory = classLoaderFactory;
 
@@ -51,6 +51,15 @@ public final class RmiClassLoader extends ClassLoader {
 		modificationNumber++;
 	}
 
+	/**
+	 * Adds a codebase where code of the local application can be loaded. The
+	 * accepted URLs (e.g. that use specific protocols) depend by the underlyng
+	 * {@link ClassLoaderFactory} used on {@link RMIRegistry} initialization. See
+	 * the {@link RMIRegistry.Builder#setClassLoaderFactory(ClassLoaderFactory)}
+	 * method.
+	 * 
+	 * @param url the codebase url
+	 */
 	public void addCodebase(URL url) {
 		if (staticCodebases.containsKey(url))
 			return;
@@ -69,7 +78,9 @@ public final class RmiClassLoader extends ClassLoader {
 	}
 
 	/**
-	 * Remove a codebase that is statically loaded in this RMI environment
+	 * Remove a codebase that is statically loaded in this RMI environment (A
+	 * codebase that contains the code of the local application). This method cannot
+	 * remove remotely loaded codebases.
 	 * 
 	 * @param url the url of the codebase to remove
 	 */
@@ -79,8 +90,9 @@ public final class RmiClassLoader extends ClassLoader {
 	}
 
 	/**
-	 * Called by the {@link RmiObjectInputStream} when a new class loader is
-	 * activated for a remote codebase.
+	 * Called by the {@link RMIObjectInputStream} when a new class loader is
+	 * activated for a remote codebase (A class was downloaded from a remote
+	 * codebase).
 	 * 
 	 * @param url         the codebase url
 	 * @param classLoader the codebase class loader
@@ -92,8 +104,8 @@ public final class RmiClassLoader extends ClassLoader {
 
 	/**
 	 * Gets the modification number that is incremented every time a new change to
-	 * the codebase set is done on this {@link RmiClassLoader}. This method is used
-	 * by {@link RmiHandler} to decide when the set of the local active codebases
+	 * the codebase-set is done on this {@link RMIClassLoader}. This method is used
+	 * by {@link RMIHandler} to decide when the set of the local active codebases
 	 * should be sent to the remote peer.
 	 * 
 	 * @return the number of modifications apported to this class loader

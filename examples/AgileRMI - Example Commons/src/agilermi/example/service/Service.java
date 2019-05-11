@@ -1,21 +1,24 @@
 package agilermi.example.service;
 
 import agilermi.configuration.Remote;
+import agilermi.exception.RemoteException;
 
 public interface Service extends Remote {
 
-	int square(int x);
+	int square(int x) throws RemoteException;
 
-	double add(double x, double y);
+	double add(double x, double y) throws RemoteException;
 
-	void printlnOnServer(String message);
+	void printlnOnServer(String message) throws RemoteException;
 
-	void startObserversCalls();
+	void startObserversCalls() throws RemoteException;
 
-	void attachObserver(ServiceObserver o);
+	void attachObserver(ServiceObserver o) throws RemoteException;
 
-	void detachObserver(ServiceObserver o);
+	void detachObserver(ServiceObserver o) throws RemoteException;
 
-	Service getThis();
+	Service getThis() throws RemoteException;
+
+	void infiniteCycle() throws RemoteException, InterruptedException;
 
 }

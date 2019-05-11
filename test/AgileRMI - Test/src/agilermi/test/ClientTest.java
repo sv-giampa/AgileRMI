@@ -15,11 +15,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
-import agilermi.authentication.Authenticator;
+import agilermi.authentication.RMIAuthenticator;
 import agilermi.communication.gzip.GzipEndpointFactory;
-import agilermi.configuration.FaultHandler;
-import agilermi.core.RmiHandler;
-import agilermi.core.RmiRegistry;
+import agilermi.configuration.RMIFaultHandler;
+import agilermi.core.RMIHandler;
+import agilermi.core.RMIRegistry;
 import agilermi.test.service.ObserverContainer;
 import agilermi.test.service.TestIF;
 import agilermi.test.service.TestImpl;
@@ -29,11 +29,10 @@ import agilermi.test.service.TestObserver;
 class ClientTest {
 
 	// server objects
-	RmiRegistry serverRegistry;
-	RmiRegistry clientRegistry;
+	RMIRegistry serverRegistry;
+	RMIRegistry clientRegistry;
 
 	// client objects
-	RmiHandler rmiHandler;
 	TestIF stub;
 
 	@BeforeAll
@@ -50,7 +49,7 @@ class ClientTest {
 
 	void serverSetUp() throws Exception {
 
-		Authenticator authenticator = new Authenticator() {
+		RMIAuthenticator rMIAuthenticator = new RMIAuthenticator() {
 			@Override
 			public boolean authorize(String authId, Object object, Method method) {
 				return true;
@@ -65,11 +64,10 @@ class ClientTest {
 		};
 
 		// object server creation
-		// serverRegistry = new RmiRegistry(3031, true);
-		serverRegistry = RmiRegistry.builder()
+		serverRegistry = RMIRegistry.builder()
 				// .setSocketFactories(new DefaultSSLSocketFactory(), new
 				// DefaultSSLServerSocketFactory())
-				.setProtocolEndpointFactory(new GzipEndpointFactory()).setAuthenticator(authenticator).build();
+				.setProtocolEndpointFactory(new GzipEndpointFactory()).setAuthenticator(rMIAuthenticator).build();
 		serverRegistry.exportInterface(TestIF.class);
 
 		// remote objects creation
@@ -83,19 +81,18 @@ class ClientTest {
 
 	void clientSetUp() throws Exception {
 		// create the registry
-		clientRegistry = RmiRegistry.builder()
+		clientRegistry = RMIRegistry.builder()
 				// .setSocketFactories(new DefaultSSLSocketFactory(), new
 				// DefaultSSLServerSocketFactory())
 				.setProtocolEndpointFactory(new GzipEndpointFactory()).build();
 		clientRegistry.setAuthentication("localhost", 3031, "testId", "testPass");
-		rmiHandler = clientRegistry.getRmiHandler("localhost", 3031);
 
 		// attach failure observer to manage connection and I/O errors
-		clientRegistry.attachFaultHandler(new FaultHandler() {
+		clientRegistry.attachFaultHandler(new RMIFaultHandler() {
 			@Override
-			public void onFault(RmiHandler rmiHandler, Exception exception) {
-				assertEquals(rmiHandler, rmiHandler);
-				if (rmiHandler.isDisposed())
+			public void onFault(RMIHandler rMIHandler, Exception exception) {
+				assertEquals(rMIHandler, rMIHandler);
+				if (rMIHandler.isDisposed())
 					return;
 				System.out.println("The RMI handler generated an error:\n" + exception);
 			}

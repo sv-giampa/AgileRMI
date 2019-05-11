@@ -3,29 +3,31 @@ package agilermi.example.client;
 import java.io.IOException;
 import java.net.UnknownHostException;
 
-import agilermi.configuration.FaultHandler;
-import agilermi.core.RmiHandler;
-import agilermi.core.RmiRegistry;
+import agilermi.configuration.RMIFaultHandler;
+import agilermi.core.RMIHandler;
+import agilermi.core.RMIRegistry;
 import agilermi.example.service.Service;
 import agilermi.example.service.ServiceObserver;
+import agilermi.exception.RemoteException;
 
 public class AgileRmiClient {
 	private static Service service;
 
-	public static void main(String[] args) throws UnknownHostException, IOException, InterruptedException {
+	public static void main(String[] args)
+			throws UnknownHostException, IOException, InterruptedException, RemoteException {
 		rmiSetup();
 		application();
 	}
 
 	private static void rmiSetup() throws UnknownHostException, IOException, InterruptedException {
 		// connect the ObjectPeer, and get the ObjectRegistry
-		RmiRegistry registry = RmiRegistry.builder().build();
+		RMIRegistry registry = RMIRegistry.builder().build();
 
 		// attach failure observer to manage connection and I/O errors
-		registry.attachFaultHandler(new FaultHandler() {
+		registry.attachFaultHandler(new RMIFaultHandler() {
 			@Override
-			public void onFault(RmiHandler objectPeer, Exception exception) {
-				System.out.println("[FaultHandler] The object peer generated an error:\n" + exception);
+			public void onFault(RMIHandler objectPeer, Exception exception) {
+				System.out.println("[RMIFaultHandler] The object peer generated an error:\n" + exception);
 			}
 		});
 
@@ -44,12 +46,30 @@ public class AgileRmiClient {
 	 * Application (do not care about connection and other communication details)
 	 * 
 	 * @throws InterruptedException
+	 * @throws RemoteException
 	 */
-	private static void application() throws InterruptedException {
+	private static void application() throws InterruptedException, RemoteException {
 
 		Service theSameService = service.getThis();
 
 		System.out.println("equals : " + service.equals(theSameService));
+
+		System.out.println("starting infinite cycle...");
+		Thread th = new Thread(() -> {
+			try {
+				service.infiniteCycle();
+				System.out.println("ERROR: infinite cycle end!");
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} catch (RemoteException e) {
+				e.printStackTrace();
+			}
+		});
+		th.start();
+		System.out.println("infinite cycle started.");
+		Thread.sleep(1000);
+		th.interrupt();
+		System.out.println("infinite cycle interrupted.");
 
 		// create an observer through anonymous class that prints on the client
 		// standard output
@@ -97,11 +117,6 @@ public class AgileRmiClient {
 		Thread.sleep(8000);
 
 		System.out.println("Example terminated.");
-		Thread.sleep(2000);
-
-		while (true) {
-			Thread.sleep(1000);
-		}
 	}
 
 }

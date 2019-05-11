@@ -41,22 +41,22 @@ import agilermi.configuration.Remote;
  * class is the right ventricle of the heart of the deep remote referencing
  * mechanism, that replaces all the remote object references with their remote
  * stub, when they are sent on the network. Its counterpart is the
- * {@link RmiObjectInputStream} class.
+ * {@link RMIObjectInputStream} class.
  * 
  * @author Salvatore Giampa'
  *
  */
-final class RmiObjectOutputStream extends ObjectOutputStream {
-	private RmiRegistry rmiRegistry;
+final class RMIObjectOutputStream extends ObjectOutputStream {
+	private RMIRegistry rmiRegistry;
 	private Class<?> rootType = null;
 
-	public RmiObjectOutputStream(OutputStream outputStream, RmiRegistry rmiRegistry) throws IOException {
+	public RMIObjectOutputStream(OutputStream outputStream, RMIRegistry rmiRegistry) throws IOException {
 		super(outputStream);
 		this.rmiRegistry = rmiRegistry;
 		this.enableReplaceObject(true);
 	}
 
-	public RmiRegistry getObjectContext() {
+	public RMIRegistry getObjectContext() {
 		return rmiRegistry;
 	}
 
@@ -203,7 +203,7 @@ final class RmiObjectOutputStream extends ObjectOutputStream {
 			return null;
 
 		// if necesseray routes the stub connection (if the remote machine connected to
-		// the sending stub has not an active RMI listener on its RmiRegistry)
+		// the sending stub has not an active RMI listener on its RMIRegistry)
 		boolean isStub = false;
 		if (obj instanceof Proxy) {
 			InvocationHandler ih = Proxy.getInvocationHandler(obj);
@@ -219,8 +219,8 @@ final class RmiObjectOutputStream extends ObjectOutputStream {
 
 		// the object is a non-shareable stub or its formal type is remote
 		if (isStub || rmiRegistry.isRemote(formalType)) {
-			if (Debug.DEBUG)
-				System.out.printf("[RmiObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
+			if (Debug.RMI_OUTPUT_STREAM)
+				System.out.printf("[RMIObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
 						formalType.getName());
 
 			String objectId = rmiRegistry.publish(obj);

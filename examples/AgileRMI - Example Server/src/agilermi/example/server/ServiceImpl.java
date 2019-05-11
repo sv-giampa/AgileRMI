@@ -62,4 +62,11 @@ public class ServiceImpl implements Service {
 		return super.equals(obj);
 	}
 
+	@Override
+	public void infiniteCycle() throws InterruptedException {
+		while (true) {
+			Thread.sleep(1000);
+		}
+	}
+
 }

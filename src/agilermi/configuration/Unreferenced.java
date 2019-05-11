@@ -19,7 +19,7 @@ package agilermi.configuration;
 
 /**
  * Allows a remote object that implements it to know that it has no more
- * references by clients.
+ * references by remote clients.
  * 
  * @author Salvatore Giampa'
  */

@@ -20,7 +20,7 @@ package agilermi.authentication;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 
-import agilermi.core.RmiRegistry;
+import agilermi.core.RMIRegistry;
 
 /**
  * Provide an interface that allows to define implementations or adapters for
@@ -29,11 +29,11 @@ import agilermi.core.RmiRegistry;
  * @author Salvatore Giampa'
  *
  */
-public interface Authenticator {
+public interface RMIAuthenticator {
 
 	/**
 	 * Authenticate a user that established the connection from the given address.
-	 * This method allows or disallows the {@link RmiRegistry} to accept the
+	 * This method allows or disallows the {@link RMIRegistry} to accept the
 	 * incoming connection
 	 * 
 	 * @param remoteAddress the address of the remote machine

@@ -36,7 +36,7 @@ import java.util.TreeSet;
  * @author Salvatore Giampa'
  *
  */
-public class StandardAuthenticator implements Authenticator, Serializable {
+public class StandardRMIAuthenticator implements RMIAuthenticator, Serializable {
 	private static final long serialVersionUID = -3193956625893347894L;
 
 	private Object lock = new String();
@@ -96,7 +96,7 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	private Map<String, Set<ObjectAccess>> objectEntriesByRole = new HashMap<>();
 	private Map<String, Set<ClassAccess>> classEntriesByRole = new HashMap<>();
 
-	public StandardAuthenticator() {
+	public StandardRMIAuthenticator() {
 	}
 
 	@Override
@@ -746,7 +746,7 @@ public class StandardAuthenticator implements Authenticator, Serializable {
 	}
 
 	public static void main(String[] args) throws NoSuchMethodException, SecurityException {
-		StandardAuthenticator auth = new StandardAuthenticator();
+		StandardRMIAuthenticator auth = new StandardRMIAuthenticator();
 		auth.setDefaultAuthorization(false);
 
 		Object obj = new String();

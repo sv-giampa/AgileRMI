@@ -37,37 +37,37 @@ import agilermi.codemobility.ClassLoaderFactory;
  * class is the left ventricle of the heart of the deep remote referencing
  * mechanism, that replaces all the remote object references with their remote
  * stub, when they are sent on the network. Its counterpart is the
- * {@link RmiObjectInputStream} class.
+ * {@link RMIObjectInputStream} class.
  * 
  * @author Salvatore Giampa'
  *
  */
-public final class RmiObjectInputStream extends ObjectInputStream {
+public final class RMIObjectInputStream extends ObjectInputStream {
 	private String remoteAddress;
 	private int remotePort;
-	private RmiRegistry rmiRegistry;
-	private RmiHandler rmiHandler;
-	private RmiClassLoader rmiClassLoader;
+	private RMIRegistry registry;
+	private RMIHandler rmiHandler;
+	private RMIClassLoader rmiClassLoader;
 	// private Set<URL> remoteCodebases = new HashSet<>();
 	private Map<URL, ClassLoader> remoteCodebases = new HashMap<>();
 
-	public RmiObjectInputStream(InputStream inputStream, RmiHandler rmiHandler, InetSocketAddress address,
+	public RMIObjectInputStream(InputStream inputStream, RMIHandler handler, InetSocketAddress address,
 			ClassLoaderFactory classLoaderFactory) throws IOException {
 		super(inputStream);
-		this.rmiHandler = rmiHandler;
-		this.rmiRegistry = rmiHandler.getRmiRegistry();
+		this.rmiHandler = handler;
+		this.registry = handler.getRmiRegistry();
 		this.remoteAddress = address.getHostString();
 		this.remotePort = address.getPort();
-		this.rmiClassLoader = rmiRegistry.getRmiClassLoader();
+		this.rmiClassLoader = registry.getRmiClassLoader();
 		this.enableResolveObject(true);
 	}
 
-	public RmiClassLoader getRmiClassLoader() {
+	public RMIClassLoader getRmiClassLoader() {
 		return rmiClassLoader;
 	}
 
-	public RmiRegistry getRmiRegistry() {
-		return rmiRegistry;
+	public RMIRegistry getRmiRegistry() {
+		return registry;
 	}
 
 	public String getRemoteAddress() {
@@ -88,23 +88,26 @@ public final class RmiObjectInputStream extends ObjectInputStream {
 
 	@Override
 	protected synchronized Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
+		// tries to solve class through the system class-loaders
 		try {
 			return super.resolveClass(desc);
 		} catch (Exception e) {
 		}
 
+		// tries to solve class through a currently active codebase
 		try {
 			return rmiClassLoader.findClass(desc.getName());
 		} catch (Exception e) {
 		}
 
+		// tries to load class by activating a new codebase
 		for (URL codebase : remoteCodebases.keySet()) {
 			try {
 				// System.out.printf("Trying codebase %s to load class %s\n", codebase,
 				// desc.getName());
 				ClassLoader classLoader = remoteCodebases.get(codebase);
 				if (classLoader == null) {
-					classLoader = new WrapperClassLoader(rmiRegistry.getClassLoaderFactory(), codebase);
+					classLoader = new WrapperClassLoader(registry.getClassLoaderFactory(), codebase);
 					remoteCodebases.put(codebase, classLoader);
 				}
 				Class<?> cls = classLoader.loadClass(desc.getName());
@@ -127,8 +130,8 @@ public final class RmiObjectInputStream extends ObjectInputStream {
 
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler sih = (RemoteInvocationHandler) ih;
-				if (sih.remoteRegistryKey.equals(rmiRegistry.registryKey)) {
-					Skeleton skeleton = rmiRegistry.getSkeleton(sih.getObjectId());
+				if (sih.remoteRegistryKey.equals(registry.registryKey)) {
+					Skeleton skeleton = registry.getSkeleton(sih.getObjectId());
 					if (skeleton != null)
 						return skeleton.getObject();
 				}

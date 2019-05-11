@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit;
 import agilermi.configuration.Unreferenced;
 
 /**
- * Represents a local remote object exposed by a local {@link RmiRegistry}
+ * Represents a local remote object exposed by a local {@link RMIRegistry}
  * instance on the network. An instance of this class is a proxy for a remote
  * object. Instances of this class count the remote references to a remote
  * object and act the distributed garbage collection mechanism. This is the main
@@ -45,17 +45,17 @@ final class Skeleton {
 	public static String IDENTIFIER_PREFIX = "###";
 	private static long nextId = 0;
 
-	private RmiRegistry rmiRegistry;
+	private RMIRegistry rMIRegistry;
 	private int refGlobalCounter = 0;
-	private Map<RmiHandler, Integer> refCounters = new HashMap<>();
+	private Map<RMIHandler, Integer> refCounters = new HashMap<>();
 	private Object object;
 	private String id;
 	private Set<String> names = new TreeSet<>();
 
-	Skeleton(Object object, RmiRegistry rmiRegistry) {
+	Skeleton(Object object, RMIRegistry rMIRegistry) {
 		id = IDENTIFIER_PREFIX + (nextId++);
 		this.object = object;
-		this.rmiRegistry = rmiRegistry;
+		this.rMIRegistry = rMIRegistry;
 		scheduleRemoval();
 	}
 
@@ -63,20 +63,20 @@ final class Skeleton {
 		return refGlobalCounter;
 	}
 
-	synchronized void removeRef(RmiHandler rmiHandler) {
-		Integer count = refCounters.get(rmiHandler);
+	synchronized void removeRef(RMIHandler rMIHandler) {
+		Integer count = refCounters.get(rMIHandler);
 		if (count == null || count <= 0)
 			return;
 		count = count - 1;
-		refCounters.put(rmiHandler, count);
+		refCounters.put(rMIHandler, count);
 		refGlobalCounter--;
-		if (Debug.DEBUG)
+		if (Debug.SKELETONS)
 			System.out.printf("[Distributed GC] removed remote reference shared with '%s'\n\t(Object=%s; Class=%s)\n",
-					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+					rMIHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
 		scheduleRemoval();
 	}
 
-	synchronized void addRef(RmiHandler rmiHandler) {
+	synchronized void addRef(RMIHandler rMIHandler) {
 		if (scheduledRemoval != null) {
 			if (scheduledRemoval.cancel(false)) {
 				scheduledRemoval = null;
@@ -86,38 +86,38 @@ final class Skeleton {
 				} catch (InterruptedException e) {
 				} catch (ExecutionException e) {
 				}
-				rmiRegistry.skeletonByObject.put(object, this);
-				rmiRegistry.skeletonById.put(id, this);
+				rMIRegistry.skeletonByObject.put(object, this);
+				rMIRegistry.skeletonById.put(id, this);
 			}
 		}
 
-		Integer count = refCounters.get(rmiHandler);
+		Integer count = refCounters.get(rMIHandler);
 		if (count == null)
-			refCounters.put(rmiHandler, 1);
+			refCounters.put(rMIHandler, 1);
 		else {
-			count = refCounters.get(rmiHandler) + 1;
-			refCounters.put(rmiHandler, count);
+			count = refCounters.get(rMIHandler) + 1;
+			refCounters.put(rMIHandler, count);
 		}
 		refGlobalCounter++;
-		if (Debug.DEBUG)
+		if (Debug.SKELETONS)
 			System.out.printf("[Distributed GC] added remote reference shared with '%s'\n\t(Object=%s; Class=%s)\n",
-					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+					rMIHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
 	}
 
-	synchronized void removeAllRefs(RmiHandler rmiHandler) {
-		Integer count = refCounters.remove(rmiHandler);
+	synchronized void removeAllRefs(RMIHandler rMIHandler) {
+		Integer count = refCounters.remove(rMIHandler);
 		refGlobalCounter -= count;
-		if (Debug.DEBUG)
+		if (Debug.SKELETONS)
 			System.out.printf(
 					"[Distributed GC] removed all remote references shared with '%s'\n\t(Object=%s; Class=%s)\n",
-					rmiHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+					rMIHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
 		scheduleRemoval();
 	}
 
 	private Future<?> scheduledRemoval;
 
 	private synchronized void scheduleRemoval() {
-		if (Debug.DEBUG)
+		if (Debug.SKELETONS)
 			System.out.printf("[Distributed GC] trying to schedule removal\n\t(Object=%s; Class=%s)\n", object,
 					object.getClass().getName());
 		if (refGlobalCounter == 0 && names.isEmpty()) {
@@ -129,30 +129,30 @@ final class Skeleton {
 						return;
 				}
 			}
-			if (Debug.DEBUG)
+			if (Debug.SKELETONS)
 				System.out.printf("[Distributed GC] scheduling removal\n\t(Object=%s; Class=%s)\n", object,
 						object.getClass().getName());
 
 			// schedule the skeleton remove operation to be executed afte 10 seconds, to
 			// avoid errors caused by network latecies (e.g. when a machine pass a remote
 			// reference of this skeleton to another machine)
-			scheduledRemoval = rmiRegistry.executorService.schedule(() -> {
+			scheduledRemoval = rMIRegistry.executorService.schedule(() -> {
 				synchronized (Skeleton.this) {
 					if (refGlobalCounter == 0 && names.isEmpty()) {
 						if (object instanceof Unreferenced)
 							((Unreferenced) object).unreferenced();
 
-						if (Debug.DEBUG)
+						if (Debug.SKELETONS)
 							System.out.printf("[Distributed GC] removed from registry\n\t(Object=%s; Class=%s)\n",
 									object, object.getClass().getName());
-						rmiRegistry.unpublish(object);
+						rMIRegistry.unpublish(object);
 					}
 				}
-			}, rmiRegistry.getDgcLeaseValue(), TimeUnit.MILLISECONDS);
+			}, rMIRegistry.getDgcLeaseValue(), TimeUnit.MILLISECONDS);
 
-			if (Debug.DEBUG)
+			if (Debug.SKELETONS)
 				System.out.printf("[Distributed GC] removal scheduled at %d ms\n\t(Object=%s; Class=%s)\n",
-						rmiRegistry.getDgcLeaseValue(), object, object.getClass().getName());
+						rMIRegistry.getDgcLeaseValue(), object, object.getClass().getName());
 		}
 	}
 

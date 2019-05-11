@@ -34,7 +34,7 @@ final class WrapperClassLoader extends ClassLoader {
 	@Override
 	protected Class<?> findClass(String name) throws ClassNotFoundException {
 		Class<?> cls = classLoader.loadClass(name);
-		if (Debug.DEBUG)
+		if (Debug.CLASSLOADERS)
 			System.out.printf("[WrapperClassLoader] loaded class %s from codesource %s\n", cls.getName(),
 					cls.getProtectionDomain().getCodeSource());
 		return cls;
@@ -42,7 +42,7 @@ final class WrapperClassLoader extends ClassLoader {
 
 	@Override
 	protected void finalize() throws Throwable {
-		if (Debug.DEBUG)
+		if (Debug.CLASSLOADERS)
 			System.out.println("[WrapperClassLoader.finalize()] class loader finalized: " + url);
 		if (classLoader instanceof Closeable)
 			((Closeable) classLoader).close();

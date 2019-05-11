@@ -18,15 +18,15 @@ package agilermi.codemobility;
 
 import java.net.URL;
 
-import agilermi.core.RmiRegistry;
+import agilermi.core.RMIRegistry;
 
 /**
  * This class is used to define a proper class loading strategy for the target
  * platform and to obtain a functional weak code mobility at the RMI protocol
  * level. The actual instances of this interfaces can be passed to the
- * {@link RmiRegistry.Builder} to customize the class loading process when
+ * {@link RMIRegistry.Builder} to customize the class loading process when
  * receiving remote objects whose code is not known in the local environment. By
- * default, {@link RmiRegistry} uses the {@link URLClassLoaderFactory} to
+ * default, {@link RMIRegistry} uses the {@link URLClassLoaderFactory} to
  * download code from remote codebases.
  * 
  * Some platform, that implements its own Java Virtual Machine, needs different

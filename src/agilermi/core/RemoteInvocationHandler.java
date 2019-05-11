@@ -21,13 +21,15 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.lang.reflect.Array;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
+import java.util.LinkedList;
+import java.util.List;
 
 import agilermi.exception.LocalAuthenticationException;
-import agilermi.exception.RemoteException;
 
 /**
  * Defines the invocation handler for the object stubs
@@ -39,26 +41,14 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private static final long serialVersionUID = 2428505156272752228L;
 
 	private String objectId;
-	private transient RmiHandler handler;
+	private transient RMIHandler handler;
 
-	private boolean hashCodeRequested = false;
 	private int hashCode;
 	final String remoteRegistryKey;
 
-	public RemoteInvocationHandler(String objectId, RmiHandler rmiHandler) {
-		this.objectId = objectId;
-		this.handler = rmiHandler;
-		this.remoteRegistryKey = rmiHandler.getRemoteRegistryKey();
-		try {
-			handler.putHandle(new NewReferenceMessage(objectId));
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-		}
-	}
-
 	private void writeObject(ObjectOutputStream out) throws IOException {
-		if (!(out instanceof RmiObjectOutputStream))
-			System.err.println("** WARNING ** in agilermi.RemoteInvocationHandler.writeObject():\n"
+		if (!(out instanceof RMIObjectOutputStream))
+			System.err.println("** WARNING ** in " + getClass().getName() + ".writeObject():\n"
 					+ "\tWe are writing a remote stub into a non-RMI stream!\n"
 					+ "\tWe cannot say what will be read on the input stream of the other side!\n"
 					+ "\tProbably this stub will not be able to establish the connection with its remote counterpart!\n"
@@ -75,55 +65,92 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		String host = in.readUTF();
 		int port = in.readInt();
 
-		if (in instanceof RmiObjectInputStream) {
-			RmiObjectInputStream rmiInput = (RmiObjectInputStream) in;
+		if (in instanceof RMIObjectInputStream) {
+			RMIObjectInputStream rmiInput = (RMIObjectInputStream) in;
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
 				host = rmiInput.getRemoteAddress();
-			RmiRegistry rmiRegistry = rmiInput.getRmiRegistry();
-			if (remoteRegistryKey.equals(rmiRegistry.registryKey) && rmiRegistry.getSkeleton(objectId) != null)
+			RMIRegistry rMIRegistry = rmiInput.getRmiRegistry();
+			if (remoteRegistryKey.equals(rMIRegistry.registryKey) && rMIRegistry.getSkeleton(objectId) != null)
 				return;
-			handler = rmiRegistry.getRmiHandler(host, port, rmiRegistry.isMultiConnectionMode());
+			handler = rMIRegistry.getRMIHandler(host, port, rMIRegistry.isMultiConnectionMode());
 		} else {
-			handler = RmiRegistry.builder().build().getRmiHandler(host, port);
+			handler = RMIRegistry.builder().build().getRMIHandler(host, port);
 		}
 
 		try {
-			handler.putHandle(new NewReferenceMessage(objectId));
+			handler.putMessage(new NewReferenceMessage(objectId));
 		} catch (Exception e) {
 
 		}
 	}
 
-	public String getObjectId() {
+	private void virtualiseStackTrace(Throwable e) {
+		List<StackTraceElement> newStackList = new LinkedList<>();
+		StackTraceElement[] remoteStack = e.getStackTrace();
+		StackTraceElement[] localStack = Thread.currentThread().getStackTrace();
+
+		// add remote part of stack trace
+		String thisClassName = this.getClass().getName();
+		for (int i = 0; i < remoteStack.length; i++) {
+			newStackList.add(remoteStack[i]);
+			String className = remoteStack[i].getClassName();
+			if (className.equals(thisClassName))
+				break;
+		}
+
+		// add RMI stack element
+		newStackList.add(new StackTraceElement("============> Remote Method Invocation ============>", "", "", -1));
+
+		// add local part of stack trace
+		for (int i = 4; i < localStack.length; i++) {
+			if (localStack[i].getClassName().equals(this.getClass().getName())
+					|| localStack[i].getClassName().contains(".$Proxy"))
+				continue;
+			newStackList.add(localStack[i]);
+		}
+
+		StackTraceElement[] newStack = newStackList.toArray(new StackTraceElement[newStackList.size()]);
+		e.setStackTrace(newStack);
+	}
+
+	String getObjectId() {
 		return objectId;
 	}
 
-	public RmiHandler getHandler() {
+	RMIHandler getHandler() {
 		return handler;
+	}
+
+	public RemoteInvocationHandler(String objectId, RMIHandler rMIHandler) {
+		this.objectId = objectId;
+		this.handler = rMIHandler;
+		this.remoteRegistryKey = rMIHandler.getRemoteRegistryKey();
+		try {
+			handler.putMessage(new NewReferenceMessage(objectId));
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
 	}
 
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 
-		// create the invocation handle
-		InvocationMessage invocation = new InvocationMessage(objectId, method.getName(), method.getParameterTypes(),
-				args);
-
 		String methodName = method.getName();
 		Class<?>[] parameterTypes = method.getParameterTypes();
 
-		// compute hashCode() method locally
+		// create the invocation handle
+		InvocationMessage invocation = new InvocationMessage(objectId, methodName, parameterTypes, args);
+
+		// is calling hashCode? this flag is useful for hashCode caching
 		boolean hashCodeCall = methodName.equals("hashCode") && parameterTypes.length == 0;
-		if (hashCodeCall && hashCodeRequested) {
-			return hashCode;
-		}
 
-//		if (methodName.equals("toString")) {
-//			return "Proxy:" + objectId + "@" + handler.getInetSocketAddress().getHostName() + ":"
-//					+ handler.getInetSocketAddress().getPort();
-//		}
+		if (Debug.INVOCATION_HANDLERS)
+			if (methodName.equals("toString")) {
+				return "[DEBUG toString()] Proxy:" + objectId + "@" + handler.getInetSocketAddress().getHostName() + ":"
+						+ handler.getInetSocketAddress().getPort();
+			}
 
-		// verify alias in the equals() method
+		// verify alias in the equals() method. Try to compute equals() locally.
 		if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class) {
 			if (args[0] == proxy)
 				return Boolean.valueOf(true);
@@ -142,63 +169,95 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			}
 		}
 
-		try {
-			if (handler.isDisposed()) {
-				if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class)
-					return Boolean.valueOf(false);
-				if (methodName.equals("toString") && parameterTypes.length == 0)
-					return "[broken remote reference " + objectId + "@" + handler.getInetSocketAddress().getHostString()
-							+ ":" + handler.getInetSocketAddress().getPort() + "]";
-				if (methodName.equals("hashCode") && parameterTypes.length == 0)
-					return Integer.valueOf(0);
-				if (handler.getRmiRegistry().isRemoteExceptionEnabled())
-					throw new RemoteException();
-			} else {
+		boolean isInterrupted = false;
+		boolean messageSent = false;
 
-				handler.putHandle(invocation);
+		while (!messageSent) {
+			try {
+				handler.putMessage(invocation);
+				messageSent = true;
+			} catch (InterruptedException e) {
+				isInterrupted = true;
+			}
+		}
+
+		if (isInterrupted) {
+			handler.putMessage(new InterruptionMessage(invocation.id));
+		}
+
+		while (true) {
+			try {
 				invocation.awaitResult();
-
-				if (invocation.thrownException != null) {
-					if (invocation.thrownException instanceof RemoteException) {
-						if (methodName.equals("equals") && parameterTypes.length == 1
-								&& parameterTypes[0] == Object.class)
-							return Boolean.valueOf(false);
-						if (methodName.equals("toString") && parameterTypes.length == 0)
-							return "[broken remote reference " + objectId + "@"
-									+ handler.getInetSocketAddress().getHostString() + ":"
-									+ handler.getInetSocketAddress().getPort() + "]";
-						if (methodName.equals("hashCode") && parameterTypes.length == 0)
-							return Integer.valueOf(0);
-					}
-					invocation.thrownException.fillInStackTrace();
-					throw invocation.thrownException;
-				} else if (hashCodeCall) {
-					hashCode = (Integer) invocation.returnValue;
-					hashCodeRequested = true;
+				break;
+			} catch (InterruptedException e) {
+				if (!isInterrupted) {
+					isInterrupted = true;
+					handler.putMessage(new InterruptionMessage(invocation.id));
 				}
 			}
-		} catch (InterruptedException e) {
+		}
+
+		if (isInterrupted)
+			Thread.currentThread().interrupt();
+
+		if (invocation.returnValue == null) {
+			if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class)
+				return Boolean.valueOf(false);
+			if (methodName.equals("hashCode") && parameterTypes.length == 0)
+				return Integer.valueOf(hashCode);
+			if (handler.isDisposed() && methodName.equals("toString") && parameterTypes.length == 0)
+				return "[broken remote reference " + objectId + "@" + handler.getInetSocketAddress().getHostString()
+						+ ":" + handler.getInetSocketAddress().getPort() + "]";
+		}
+
+		if (invocation.thrownException != null) {
+			virtualiseStackTrace(invocation.thrownException);
+			throw invocation.thrownException;
+		} else if (hashCodeCall) {
+			// cache hashCode for next non-deliverable invocations
+			hashCode = (Integer) invocation.returnValue;
 		}
 
 		Class<?> returnType = method.getReturnType();
 
-		if (!returnType.equals(void.class) && invocation.returnValue == null && returnType.isPrimitive()) {
-			if (returnType == boolean.class)
-				return false;
-			if (returnType == byte.class)
-				return (byte) 0;
-			else if (returnType == char.class)
-				return (char) 0;
-			else if (returnType == short.class)
-				return (short) 0;
-			else if (returnType == int.class)
-				return (int) 0;
-			else if (returnType == long.class)
-				return (long) 0;
-			else if (returnType == float.class)
-				return (float) 0;
-			else if (returnType == double.class)
-				return (double) 0;
+		if (handler.isDisposed() && !returnType.equals(void.class) && invocation.returnValue == null) {
+			if (returnType.isPrimitive()) {
+				if (returnType == boolean.class)
+					return false;
+				if (returnType == byte.class)
+					return (byte) 0;
+				else if (returnType == char.class)
+					return (char) 0;
+				else if (returnType == short.class)
+					return (short) 0;
+				else if (returnType == int.class)
+					return (int) 0;
+				else if (returnType == long.class)
+					return (long) 0;
+				else if (returnType == float.class)
+					return (float) 0;
+				else if (returnType == double.class)
+					return (double) 0;
+			} else if (Number.class.isAssignableFrom(returnType)) {
+				if (Byte.class.isAssignableFrom(returnType))
+					return Byte.valueOf((byte) 0);
+				else if (Short.class.isAssignableFrom(returnType))
+					return Short.valueOf((short) 0);
+				else if (Integer.class.isAssignableFrom(returnType))
+					return Integer.valueOf(0);
+				else if (Long.class.isAssignableFrom(returnType))
+					return Long.valueOf(0);
+				else if (Float.class.isAssignableFrom(returnType))
+					return Float.valueOf(0f);
+				else if (Double.class.isAssignableFrom(returnType))
+					return Double.valueOf(0d);
+			} else if (Boolean.class.isAssignableFrom(returnType))
+				return Boolean.valueOf(false);
+			else if (Character.class.isAssignableFrom(returnType))
+				return Character.valueOf((char) 0);
+			else if (returnType.isArray()) {
+				return Array.newInstance(returnType.getComponentType(), 0);
+			}
 		}
 
 		return invocation.returnValue;
@@ -210,7 +269,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	 */
 	@Override
 	protected void finalize() throws Throwable {
-		handler.putHandle(new FinalizeMessage(objectId));
+		handler.putMessage(new FinalizeMessage(objectId));
 		super.finalize();
 	}
 

@@ -28,14 +28,57 @@ import java.util.concurrent.Semaphore;
 
 /**
  * Represents a generic message sent by a {@link RemoteInvocationHandler} to its
- * associated local {@link RmiHandler} and also it represents a message that can
- * be sent by a {@link RmiHandler} to another {@link RmiHandler} through the
+ * associated local {@link RMIHandler} and also it represents a message that can
+ * be sent by a {@link RMIHandler} to another {@link RMIHandler} through the
  * network, so it is {@link Serializable}.
  * 
  * @author Salvatore Giampa'
  *
  */
-interface RmiMessage extends Serializable {
+interface RMIMessage extends Serializable {
+}
+
+abstract class SynchronousRMIMessage implements RMIMessage {
+	private static final long serialVersionUID = 1326481035766265225L;
+	private static long nextId;
+	private long id;
+	private Object lock = new Object();
+	private boolean signaled = false;
+
+	SynchronousRMIMessage() {
+		id = nextId++;
+	}
+
+	long getId() {
+		return id;
+	}
+
+	void signalResult(SynchronousRMIMessage message) {
+		copyResult(message);
+		synchronized (lock) {
+			lock.notifyAll();
+		}
+	}
+
+	void awaitResult() throws InterruptedException {
+		synchronized (lock) {
+			while (!signaled)
+				lock.wait();
+		}
+	}
+
+	abstract boolean isResponse();
+
+	abstract void copyResult(SynchronousRMIMessage resultMessage);
+}
+
+class InterruptionMessage implements RMIMessage {
+	private static final long serialVersionUID = 4445481195634515157L;
+	public final long invocationId;
+
+	public InterruptionMessage(long invocationId) {
+		this.invocationId = invocationId;
+	}
 }
 
 /**
@@ -44,14 +87,14 @@ interface RmiMessage extends Serializable {
  * @author Salvatore Giampa'
  *
  */
-class CodebaseUpdateMessage implements RmiMessage {
+class CodebaseUpdateMessage implements RMIMessage {
 	private static final long serialVersionUID = -7195041483720248013L;
 	public Set<URL> codebases;
 
 	private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
 		input.defaultReadObject();
-		if (input instanceof RmiObjectInputStream) {
-			RmiObjectInputStream rmiInput = (RmiObjectInputStream) input;
+		if (input instanceof RMIObjectInputStream) {
+			RMIObjectInputStream rmiInput = (RMIObjectInputStream) input;
 			String remoteAddress = rmiInput.getRemoteAddress();
 			Set<URL> replaced = new HashSet<>();
 			Iterator<URL> it = codebases.iterator();
@@ -74,7 +117,7 @@ class CodebaseUpdateMessage implements RmiMessage {
  * @author Salvatore Giampa'
  *
  */
-class InvocationMessage implements RmiMessage {
+class InvocationMessage implements RMIMessage {
 	private static final long serialVersionUID = 992296041709440752L;
 
 	private static long nextId = 0;
@@ -100,9 +143,6 @@ class InvocationMessage implements RmiMessage {
 	public transient Object returnValue;
 	public transient Class<?> returnClass;
 	public transient Throwable thrownException;
-
-	// wait condition for the RemoteInvocationHandler that requested this invocation
-	public transient boolean returned = false;
 
 	/**
 	 * Builds an invocation handle with the given invocation identifier
@@ -143,14 +183,12 @@ class InvocationMessage implements RmiMessage {
 	 * Waits the result of the remote invocation. After the execution of this
 	 * blocking operation, the {@link #returnValue} and the {@link #returnClass}
 	 * fields will contain the returned object and its class, respectively.
+	 * 
+	 * @throws InterruptedException
 	 */
-	public void awaitResult() {
+	public void awaitResult() throws InterruptedException {
 		if (semaphore != null)
-			try {
-				semaphore.acquire();
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
+			semaphore.acquire();
 	}
 
 	/**
@@ -171,7 +209,7 @@ class InvocationMessage implements RmiMessage {
  * @author Salvatore Giampa'
  *
  */
-class ReturnMessage implements RmiMessage {
+class ReturnMessage implements RMIMessage {
 	private static final long serialVersionUID = 6674503222830749941L;
 	public long invocationId;
 	public Class<?> returnClass;
@@ -196,7 +234,7 @@ class ReturnMessage implements RmiMessage {
  * @author Salvatore Giampa'
  *
  */
-class RemoteInterfaceMessage implements RmiMessage {
+class RemoteInterfaceMessage implements RMIMessage {
 
 	private static final long serialVersionUID = -4774302373023169775L;
 
@@ -244,13 +282,13 @@ class RemoteInterfaceMessage implements RmiMessage {
 
 /**
  * This class represents a request to add a new remote reference to a skeleton.
- * This is sent over a {@link RmiHandler} when a new stub is constructed or
+ * This is sent over a {@link RMIHandler} when a new stub is constructed or
  * deserialized
  * 
  * @author Salvatore Giampa'
  *
  */
-class NewReferenceMessage implements RmiMessage {
+class NewReferenceMessage implements RMIMessage {
 	private static final long serialVersionUID = 8561515474575531127L;
 	public String objectId;
 
@@ -268,7 +306,7 @@ class NewReferenceMessage implements RmiMessage {
  * @author Salvatore Giampa'
  *
  */
-class FinalizeMessage implements RmiMessage {
+class FinalizeMessage implements RMIMessage {
 	private static final long serialVersionUID = 6485937225497004801L;
 
 	public String objectId;
