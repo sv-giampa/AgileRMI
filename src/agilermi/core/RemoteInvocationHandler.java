@@ -28,6 +28,10 @@ import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import agilermi.exception.LocalAuthenticationException;
 
@@ -41,10 +45,14 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private static final long serialVersionUID = 2428505156272752228L;
 
 	private String objectId;
+	private transient RMIRegistry rmiRegistry;
 	private transient RMIHandler handler;
 
 	private int hashCode;
 	final String remoteRegistryKey;
+
+	private String host;
+	private int port;
 
 	private void writeObject(ObjectOutputStream out) throws IOException {
 		if (!(out instanceof RMIObjectOutputStream))
@@ -53,29 +61,33 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 					+ "\tWe cannot say what will be read on the input stream of the other side!\n"
 					+ "\tProbably this stub will not be able to establish the connection with its remote counterpart!\n"
 					+ "\tWriting stub to a non-RMI output stream...");
-		out.defaultWriteObject();
+
 		InetSocketAddress address = handler.getInetSocketAddress();
-		out.writeUTF(address.getHostString());
-		out.writeInt(handler.getInetSocketAddress().getPort());
+		host = address.getHostString();
+		port = address.getPort();
+		out.defaultWriteObject();
 	}
 
 	private void readObject(ObjectInputStream in)
 			throws IOException, ClassNotFoundException, LocalAuthenticationException {
 		in.defaultReadObject();
-		String host = in.readUTF();
-		int port = in.readInt();
 
 		if (in instanceof RMIObjectInputStream) {
 			RMIObjectInputStream rmiInput = (RMIObjectInputStream) in;
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
 				host = rmiInput.getRemoteAddress();
-			RMIRegistry rMIRegistry = rmiInput.getRmiRegistry();
-			if (remoteRegistryKey.equals(rMIRegistry.registryKey) && rMIRegistry.getSkeleton(objectId) != null)
+			RMIRegistry rmiRegistry = rmiInput.getRmiRegistry();
+			boolean willBeReplacedByLocalReference = remoteRegistryKey.equals(rmiRegistry.getRegistryKey())
+					&& rmiRegistry.getSkeleton(objectId) != null;
+			if (willBeReplacedByLocalReference)
 				return;
-			handler = rMIRegistry.getRMIHandler(host, port, rMIRegistry.isMultiConnectionMode());
+			handler = rmiRegistry.getRMIHandler(host, port, rmiRegistry.isMultiConnectionMode());
 		} else {
 			handler = RMIRegistry.builder().build().getRMIHandler(host, port);
 		}
+
+		rmiRegistry = handler.getRMIRegistry();
+		handler.registerStub(this);
 
 		try {
 			handler.putMessage(new NewReferenceMessage(objectId));
@@ -113,6 +125,54 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		e.setStackTrace(newStack);
 	}
 
+	private Lock handlerLock = new ReentrantLock();
+	private Condition handlerCondition = handlerLock.newCondition();
+	private boolean handlerReplaced = false;
+
+	void replaceHandler(RMIHandler newHandler) {
+		handlerLock.lock();
+		try {
+			if (newHandler != null) {
+				this.handler = newHandler;
+				while (true)
+					try {
+						handler.putMessage(new NewReferenceMessage(objectId));
+						break;
+					} catch (InterruptedException e) {
+					}
+			}
+			handlerReplaced = true;
+			handlerCondition.signalAll();
+		} finally {
+			handlerLock.unlock();
+		}
+	}
+
+	private void invoke(InvocationMessage invocation) {
+		boolean messageSent = false;
+		boolean isInterrupted = false;
+		boolean interruptionSent = false;
+		while (true) {
+			try {
+				if (!messageSent) {
+					handler.putMessage(invocation);
+					messageSent = true;
+				}
+				if (isInterrupted && !interruptionSent) {
+					handler.putMessage(new InterruptionMessage(invocation.id));
+					interruptionSent = true;
+				}
+				invocation.awaitResult();
+				break;
+			} catch (InterruptedException e) {
+				isInterrupted = true;
+			}
+		}
+
+		if (isInterrupted)
+			Thread.currentThread().interrupt();
+	}
+
 	String getObjectId() {
 		return objectId;
 	}
@@ -121,10 +181,17 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		return handler;
 	}
 
-	public RemoteInvocationHandler(String objectId, RMIHandler rMIHandler) {
+	public RemoteInvocationHandler(String objectId, RMIHandler rmiHandler) {
 		this.objectId = objectId;
-		this.handler = rMIHandler;
-		this.remoteRegistryKey = rMIHandler.getRemoteRegistryKey();
+		this.handler = rmiHandler;
+		this.rmiRegistry = rmiHandler.getRMIRegistry();
+		this.remoteRegistryKey = rmiHandler.getRemoteRegistryKey();
+		handler.registerStub(this);
+
+		InetSocketAddress address = handler.getInetSocketAddress();
+		host = address.getHostString();
+		port = address.getPort();
+
 		try {
 			handler.putMessage(new NewReferenceMessage(objectId));
 		} catch (InterruptedException e) {
@@ -169,36 +236,24 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			}
 		}
 
-		boolean isInterrupted = false;
-		boolean messageSent = false;
-
-		while (!messageSent) {
-			try {
-				handler.putMessage(invocation);
-				messageSent = true;
-			} catch (InterruptedException e) {
-				isInterrupted = true;
-			}
-		}
-
-		if (isInterrupted) {
-			handler.putMessage(new InterruptionMessage(invocation.id));
-		}
-
-		while (true) {
-			try {
-				invocation.awaitResult();
-				break;
-			} catch (InterruptedException e) {
-				if (!isInterrupted) {
-					isInterrupted = true;
-					handler.putMessage(new InterruptionMessage(invocation.id));
+		boolean finish = false;
+		do {
+			invoke(invocation);
+			if (invocation.success)
+				finish = true;
+			else {
+				handlerLock.lock();
+				try {
+					long timeout = handler.getDispositionTime() + rmiRegistry.getLeaseValue();
+					while (!handlerReplaced && handler.isDisposed() && System.currentTimeMillis() < timeout)
+						handlerCondition.await(timeout - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+					handlerReplaced = false;
+					finish = handler.isDisposed();
+				} finally {
+					handlerLock.unlock();
 				}
 			}
-		}
-
-		if (isInterrupted)
-			Thread.currentThread().interrupt();
+		} while (!finish);
 
 		if (invocation.returnValue == null) {
 			if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class)

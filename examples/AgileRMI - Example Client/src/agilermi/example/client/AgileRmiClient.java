@@ -6,6 +6,7 @@ import java.net.UnknownHostException;
 import agilermi.configuration.RMIFaultHandler;
 import agilermi.core.RMIHandler;
 import agilermi.core.RMIRegistry;
+import agilermi.example.service.ClassB;
 import agilermi.example.service.Service;
 import agilermi.example.service.ServiceObserver;
 import agilermi.exception.RemoteException;
@@ -51,6 +52,13 @@ public class AgileRmiClient {
 	private static void application() throws InterruptedException, RemoteException {
 
 		Service theSameService = service.getThis();
+
+		System.out.println("equals : " + service.equals(theSameService));
+		ClassB classB = new ClassB();
+
+		System.out.println("stub getter: " + classB.getStubGetter());
+		theSameService = service.compute(classB).getService();
+		System.out.println("stub getter: " + classB.getStubGetter());
 
 		System.out.println("equals : " + service.equals(theSameService));
 

@@ -21,4 +21,6 @@ public interface Service extends Remote {
 
 	void infiniteCycle() throws RemoteException, InterruptedException;
 
+	ClassB compute(ClassB classB);
+
 }

@@ -41,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.WeakHashMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 
@@ -48,6 +49,7 @@ import javax.net.SocketFactory;
 
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
+import agilermi.configuration.RMIFaultHandler;
 import agilermi.exception.AuthorizationException;
 import agilermi.exception.LocalAuthenticationException;
 import agilermi.exception.RemoteAuthenticationException;
@@ -72,7 +74,7 @@ public final class RMIHandler {
 	private RMIObjectInputStream inputStream;
 
 	// registry associated to this handler
-	private RMIRegistry rmiRegistry;
+	private RMIRegistry registry;
 
 	// Map for invocations that are waiting a response
 	private Map<Long, InvocationMessage> invocations = Collections.synchronizedMap(new HashMap<>());
@@ -80,14 +82,15 @@ public final class RMIHandler {
 	// Map for interface requests that are waiting a response
 	private Map<Long, RemoteInterfaceMessage> interfaceRequests = Collections.synchronizedMap(new HashMap<>());
 
-	// Map for codebases update requests that are waiting a response
-	private Map<Long, CodebaseUpdateMessage> codebasesUpdateRequests = Collections.synchronizedMap(new HashMap<>());
-
 	// The queue for buffered invocations that are ready to be sent over the socket
-	private BlockingQueue<RMIMessage> messageQueue = new ArrayBlockingQueue<>(200);
+	private BlockingQueue<RMIMessage> messageQueue = new ArrayBlockingQueue<>(200, true);
 
 	// Flag that indicates if this RMIHandler has been disposed.
 	private boolean disposed = false;
+
+	private Exception dispositionException = null;
+
+	private long dispositionTime = 0;
 
 	// remote references requested by the other machine
 	private Set<String> references = new TreeSet<>();
@@ -109,29 +112,286 @@ public final class RMIHandler {
 
 	private String remoteRegistryKey;
 
+	private boolean connectionStarter;
+
+	private Set<RemoteInvocationHandler> connectedStubs = Collections
+			.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+
+	private boolean started = false;
+
+	private TransmitterThread transmitter = new TransmitterThread();
+	private ReceiverThread receiver = new ReceiverThread();
+
 	/**
-	 * Gets the address of the remote process (IP address + TCP port)
+	 * Executes the handshake with the remote {@link RMIHandler}. During the
+	 * handshake pahase the handlers exchange the registry keys, the registry
+	 * listener port and the authentication information. This function act the
+	 * handshake and validate the authentication of the remote handler on the local
+	 * registry. It also ensures that authentication was successful on the remote
+	 * side.
 	 * 
-	 * @return the {@link InetSocketAddress} containing remote host address and port
+	 * @throws IOException                   if an I/O error occurs
+	 * @throws LocalAuthenticationException  if the local {@link RMIHandler} cannot
+	 *                                       authenticate the remote one
+	 * @throws RemoteAuthenticationException if the remote {@link RMIHandler} cannot
+	 *                                       authenticate the local one
 	 */
-	public InetSocketAddress getInetSocketAddress() {
-		return inetSocketAddress;
+	private void handshake(OutputStream output, InputStream input)
+			throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
+		DataOutputStream outputStream = new DataOutputStream(output);
+		DataInputStream inputStream = new DataInputStream(input);
+
+		// checks that on the other side of the connection there is a handler that uses
+		// the same registry of this one
+		outputStream.writeUTF(registry.getRegistryKey());
+		outputStream.writeInt(registry.getListenerPort());
+		outputStream.flush();
+
+		remoteRegistryKey = inputStream.readUTF();
+		remotePort = inputStream.readInt();
+
+		if (Debug.RMI_HANDLER)
+			System.out.println("[new handler] remoteAddress=" + socket.getInetAddress().getHostAddress()
+					+ ", remotePort=" + remotePort);
+
+		if (remotePort != 0)
+			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), remotePort);
+		else
+			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
+
+		String[] auth = registry.getAuthentication(inetSocketAddress.getAddress(), inetSocketAddress.getPort());
+
+		if (auth != null) {
+			authIdentifier = auth[0];
+			authPassphrase = auth[1];
+		}
+		if (authIdentifier == null)
+			authIdentifier = "";
+		if (authPassphrase == null)
+			authPassphrase = "";
+
+		if (remoteRegistryKey.equals(registry.getRegistryKey()) && socket.getInetAddress().getCanonicalHostName()
+				.equals(InetAddress.getLocalHost().getCanonicalHostName())) {
+			sameRegistryAuthentication = true;
+			outputStream.writeBoolean(true);
+			outputStream.flush();
+		} else {
+			sameRegistryAuthentication = false;
+			outputStream.writeBoolean(false);
+			outputStream.flush();
+		}
+
+		if (inputStream.readBoolean()) // the remote handler recognized the registry key
+			return;
+
+		// if on the other side there is not the same registry of this handler, do
+		// normal authentication
+		outputStream.writeUTF(authIdentifier);
+		outputStream.writeUTF(authPassphrase);
+		outputStream.flush();
+
+		String authPass;
+		try {
+			remoteAuthIdentifier = inputStream.readUTF();
+			authPass = inputStream.readUTF();
+		} catch (Exception e) {
+			e.printStackTrace();
+			try {
+				outputStream.writeBoolean(false);
+				outputStream.flush();
+			} catch (IOException e1) {
+			}
+			throw new LocalAuthenticationException();
+		}
+
+		if (registry.getAuthenticator() == null
+				|| registry.getAuthenticator().authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
+			try {
+				outputStream.writeBoolean(true);
+				outputStream.flush();
+			} catch (IOException e1) {
+			}
+		} else {
+			try {
+				outputStream.writeBoolean(false);
+				outputStream.flush();
+			} catch (IOException e1) {
+			}
+			throw new LocalAuthenticationException();
+		}
+
+		boolean authResult = inputStream.readBoolean();
+
+		if (!authResult)
+			throw new RemoteAuthenticationException();
+	}
+
+	private void forceInvocationReturn(InvocationMessage invocation) {
+		if (registry.isRemoteExceptionEnabled()) {
+			invocation.success = false;
+			invocation.thrownException = new RemoteException();
+		}
+		invocation.signalResult();
+	}
+
+	/**
+	 * Constructs a new RMIHandler over the connection specified by the given
+	 * socket, with the specified {@link RMIRegistry}.
+	 * 
+	 * @param socket                  the socket over which the {@link RMIHandler}
+	 *                                will be created
+	 * @param registry                the {@link RMIRegistry} to use
+	 * @param protocolEndpointFactory a {@link ProtocolEndpointFactory} that allows
+	 *                                to add communication levels, such as levels
+	 *                                for cryptography or data compression
+	 * @see RMIHandler#connect(String, int, RMIRegistry, SocketFactory,
+	 *      ProtocolEndpointFactory)
+	 * @see RMIHandler#connect(String, int)
+	 * @throws IOException if an I/O error occurs
+	 */
+	RMIHandler(Socket socket, RMIRegistry registry, ProtocolEndpointFactory protocolEndpointFactory,
+			boolean connectionStarter) throws IOException {
+		this.socket = socket;
+		this.registry = registry;
+		this.connectionStarter = connectionStarter;
+
+		socket.setSoLinger(true, registry.getLeaseValue());
+		OutputStream output = socket.getOutputStream();
+		InputStream input = socket.getInputStream();
+
+		if (protocolEndpointFactory != null) {
+			protocolEndpoint = protocolEndpointFactory.createEndpoint(output, input);
+			output = protocolEndpoint.getOutputStream();
+			input = protocolEndpoint.getInputStream();
+		}
+
+		// send and receive authentication
+		handshake(output, input);
+
+		outputStream = new RMIObjectOutputStream(output, registry);
+		outputStream.flush(); // flushes ObjectOutputStream header
+		inputStream = new RMIObjectInputStream(input, this, inetSocketAddress, registry.getClassLoaderFactory());
+	}
+
+	void registerStub(RemoteInvocationHandler rih) {
+		connectedStubs.add(rih);
+	}
+
+	Set<RemoteInvocationHandler> getConnectedStubs() {
+		return connectedStubs;
+	}
+
+	boolean isConnectionStarter() {
+		return connectionStarter;
+	}
+
+	/**
+	 * A utility function used by library components to decide how to share stubs
+	 * with other machines.<br>
+	 * <br>
+	 * Given three machines A, B and C, and supposing that they are as follows:<br>
+	 * - A is the remote machine connected to this handler<br>
+	 * - B is the local machine<br>
+	 * - C is another machine who should receive from B a stub that refers to a
+	 * remote object on A<br>
+	 * <br>
+	 * this function determines if stubs on B connected to A are really shareable
+	 * with C. A stub is shareable by B when it can be serialized and reconstructed
+	 * on C maintaining a direct connection to A, the original remote machine. This
+	 * condition is possible when A has an active server listener enabled on its
+	 * registry. In this case when C receive the stub from B, it creates a new
+	 * direct connection to A. If A has no listener currently active, then its
+	 * remote listener port results to be <= 0 and the stubs that originated on that
+	 * machine must be proxyfied when they are sent from B to C, that is they must
+	 * be published on the registry of B and stubbed on C. In this case the stub of
+	 * A on B becomes itself a remote object whose stub is sent to C. So this policy
+	 * allows to "share" stubs by using this routing mechanism of the remote
+	 * invocation from C to A through B (truly, the stub on C is a new totally
+	 * different object respect to the stub on B, but this fact is transparent to
+	 * the developer).
+	 * 
+	 * @return
+	 */
+	boolean areStubsShareable() {
+		return remotePort > 0;
+	}
+
+	synchronized void start() {
+		if (started)
+			return;
+		started = true;
+		receiver.setDaemon(true);
+		transmitter.setDaemon(true);
+		receiver.start();
+		transmitter.start();
+	}
+
+	/**
+	 * Gets the key of the remote RMI registry
+	 * 
+	 * @return the key of the remote RMI registry
+	 */
+	String getRemoteRegistryKey() {
+		return remoteRegistryKey;
+	}
+
+	/**
+	 * Gets the registry used by this {@link RMIHandler}
+	 * 
+	 * @return the registry used by this peer
+	 */
+	RMIRegistry getRMIRegistry() {
+		return registry;
+	}
+
+	/**
+	 * Package-level operation used by stub invocation handlers to put new
+	 * invocations
+	 * 
+	 * @param invocation the invocation request
+	 * @throws InterruptedException
+	 */
+	synchronized void putMessage(RMIMessage rmiMessage) throws InterruptedException {
+		if (disposed) {
+			if (rmiMessage instanceof InvocationMessage) {
+				forceInvocationReturn((InvocationMessage) rmiMessage);
+			}
+			if (rmiMessage instanceof RemoteInterfaceMessage) {
+				((RemoteInterfaceMessage) rmiMessage).signalResult();
+			}
+			return;
+		}
+		if (codebasesModification != registry.getRmiClassLoader().getModificationNumber()) {
+			Set<URL> codebases = new HashSet<>(registry.getRmiClassLoader().getCodebases());
+			codebasesModification = registry.getRmiClassLoader().getModificationNumber();
+			if (!codebases.isEmpty()) {
+				CodebaseUpdateMessage cbhandle = new CodebaseUpdateMessage();
+				cbhandle.codebases = codebases;
+				messageQueue.put(cbhandle);
+			}
+		}
+		messageQueue.put(rmiMessage);
 	}
 
 	/**
 	 * Dispose this {@link RMIHandler} and frees all the used resources and threads.
-	 * A call to this method cause a callback on the failure observers attached to
-	 * the {@link RMIRegistry} associated to this instance sending them an instance
-	 * of {@link RemoteException}
+	 * A call to this method can cause a callback on the {@link RMIFaultHandler}
+	 * instances attached to the {@link RMIRegistry} associated to this instance
+	 * sending them the disposition exception of this handler (See
+	 * {@link #getDispositionException()}).
 	 * 
-	 * @param signalFailure set to true if you want this {@link RMIHandler} to send
-	 *                      a signal to the failure observers attached to the
-	 *                      {@link RMIRegistry} that created this instance
+	 * @param tryRepair   set to true to try to create a new {@link RMIHandler} used
+	 *                    as a replacement of this one. This will repair the RMI
+	 *                    connections of the stubs.
+	 * @param signalFault set to true if this {@link RMIHandler} should send a
+	 *                    signal to the {@link RMIFaultHandler} instances attached
+	 *                    to the {@link RMIRegistry} that created this instance
 	 */
-	public synchronized void dispose(boolean signalFailure) {
+	synchronized void dispose(boolean tryRepair, boolean signalFault) {
 		if (disposed)
 			return;
 
+		dispositionTime = System.currentTimeMillis();
 		disposed = true;
 		receiver.interrupt();
 		transmitter.interrupt();
@@ -161,31 +421,26 @@ public final class RMIHandler {
 
 		// release all the handle in the handleQueue
 		// synchronized (messageQueue) {
-		for (RMIMessage rMIMessage : messageQueue) {
-			if (rMIMessage instanceof InvocationMessage) {
-				forceInvocationReturn((InvocationMessage) rMIMessage);
+		for (RMIMessage message : messageQueue) {
+			if (message instanceof InvocationMessage) {
+				forceInvocationReturn((InvocationMessage) message);
 			}
-			if (rMIMessage instanceof RemoteInterfaceMessage) {
-				((RemoteInterfaceMessage) rMIMessage).signalResult();
+			if (message instanceof RemoteInterfaceMessage) {
+				((RemoteInterfaceMessage) message).signalResult();
 			}
 		}
 		// }
 
 		for (Iterator<String> it = references.iterator(); it.hasNext();) {
-			Skeleton sk = rmiRegistry.getSkeleton(it.next());
+			Skeleton sk = registry.getSkeleton(it.next());
 			if (sk != null) {
 				sk.removeAllRefs(this);
 				it.remove();
 			}
 		}
 
-		if (signalFailure) {
-			RemoteException dispositionException = new RemoteException();
-			rmiRegistry.sendRmiHandlerFailure(this, dispositionException);
-		}
-
 		try {
-			rmiRegistry.rMIFaultHandler.onFault(this, null);
+			registry.fault(this, tryRepair, signalFault);
 		} catch (Throwable e) {
 			e.printStackTrace();
 		}
@@ -196,6 +451,30 @@ public final class RMIHandler {
 		invocations.clear();
 		messageQueue.clear();
 		System.gc();
+	}
+
+	/**
+	 * Dispose this {@link RMIHandler} and frees all the used resources and threads.
+	 * A call to this method can cause a callback on the {@link RMIFaultHandler}
+	 * instances attached to the {@link RMIRegistry} associated to this instance
+	 * sending them the disposition exception of this handler (See
+	 * {@link #getDispositionException()}).
+	 * 
+	 * @param signalFault set to true if this {@link RMIHandler} should send a
+	 *                    signal to the {@link RMIFaultHandler} instances attached
+	 *                    to the {@link RMIRegistry} that created this instance
+	 */
+	public void dispose(boolean signalFault) {
+		dispose(false, signalFault);
+	}
+
+	/**
+	 * Gets the address of the remote process (IP address + TCP port)
+	 * 
+	 * @return the {@link InetSocketAddress} containing remote host address and port
+	 */
+	public InetSocketAddress getInetSocketAddress() {
+		return inetSocketAddress;
 	}
 
 	/**
@@ -269,10 +548,6 @@ public final class RMIHandler {
 		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
 		putMessage(msg);
 		msg.awaitResult();
-
-		if (msg.interfaces == null || msg.interfaces.length == 0 || disposed)
-			throw new IOException("RMIHandler has been disposed");
-
 		return getStub(objectId, msg.interfaces);
 	}
 
@@ -302,266 +577,38 @@ public final class RMIHandler {
 	}
 
 	/**
-	 * A utility function used by library components to decide how to share stubs
-	 * with other machines.<br>
-	 * <br>
-	 * Given three machines A, B and C, and supposing that they are as follows:<br>
-	 * - A is the remote machine connected to this handler<br>
-	 * - B is the local machine<br>
-	 * - C is another machine who should receive from B a stub that refers to a
-	 * remote object on A<br>
-	 * <br>
-	 * this function determines if stubs on B connected to A are really shareable
-	 * with C. A stub is shareable by B when it can be serialized and reconstructed
-	 * on C maintaining a direct connection to A, the original remote machine. This
-	 * condition is possible when A has an active server listener enabled on its
-	 * registry. In this case when C receive the stub from B, it creates a new
-	 * direct connection to A. If A has no listener currently active, then its
-	 * remote listener port results to be <= 0 and the stubs that originated on that
-	 * machine must be proxyfied when they are sent from B to C, that is they must
-	 * be published on the registry of B and stubbed on C. In this case the stub of
-	 * A on B becomes itself a remote object whose stub is sent to C. So this policy
-	 * allows to "share" stubs by using this routing mechanism of the remote
-	 * invocation from C to A through B (truly, the stub on C is a new totally
-	 * different object respect to the stub on B, but this fact is transparent to
-	 * the developer).
+	 * Gets the time at which this handler has been disposed.
 	 * 
-	 * @return
+	 * @return a long value in milliseconds
 	 */
-	boolean areStubsShareable() {
-		return remotePort > 0;
+	public long getDispositionTime() {
+		return dispositionTime;
 	}
 
 	/**
-	 * Constructs a new RMIHandler over the connection specified by the given
-	 * socket, with the specified {@link RMIRegistry}.
+	 * Gets the exception that caused this handler to be disposed.
 	 * 
-	 * @param socket      the socket over which the {@link RMIHandler} will be
-	 *                    created
-	 * @param rmiRegistry the {@link RMIRegistry} to use
-	 * @see RMIHandler#connect(String, int, RMIRegistry, SocketFactory,
-	 *      ProtocolEndpointFactory)
-	 * @see RMIHandler#connect(String, int)
-	 * @throws IOException if an I/O error occurs
+	 * @return an Exception
 	 */
-	RMIHandler(Socket socket, RMIRegistry registry) throws IOException {
-		this(socket, registry, null);
+	public Exception getDispositionException() {
+		return dispositionException;
 	}
 
-	/**
-	 * Constructs a new RMIHandler over the connection specified by the given
-	 * socket, with the specified {@link RMIRegistry}.
-	 * 
-	 * @param socket                  the socket over which the {@link RMIHandler}
-	 *                                will be created
-	 * @param registry                the {@link RMIRegistry} to use
-	 * @param protocolEndpointFactory a {@link ProtocolEndpointFactory} that allows
-	 *                                to add communication levels, such as levels
-	 *                                for cryptography or data compression
-	 * @see RMIHandler#connect(String, int, RMIRegistry, SocketFactory,
-	 *      ProtocolEndpointFactory)
-	 * @see RMIHandler#connect(String, int)
-	 * @throws IOException if an I/O error occurs
-	 */
-	RMIHandler(Socket socket, RMIRegistry registry, ProtocolEndpointFactory protocolEndpointFactory)
-			throws IOException {
-		this.socket = socket;
-		this.rmiRegistry = registry;
-
-		String[] auth = registry.getAuthentication(socket.getInetAddress(), socket.getPort());
-
-		if (auth != null) {
-			authIdentifier = auth[0];
-			authPassphrase = auth[1];
-		}
-		if (authIdentifier == null)
-			authIdentifier = "";
-		if (authPassphrase == null)
-			authPassphrase = "";
-
-		OutputStream output = socket.getOutputStream();
-		InputStream input = socket.getInputStream();
-
-		if (protocolEndpointFactory != null) {
-			protocolEndpoint = protocolEndpointFactory.createEndpoint(output, input);
-			output = protocolEndpoint.getOutputStream();
-			input = protocolEndpoint.getInputStream();
-		}
-
-		// send and receive authentication
-		handshake(output, input);
-
-		outputStream = new RMIObjectOutputStream(output, registry);
-		outputStream.flush(); // flushes ObjectOutputStream header
-		inputStream = new RMIObjectInputStream(input, this, inetSocketAddress, registry.getClassLoaderFactory());
+	@Override
+	public int hashCode() {
+		final int prime = 31;
+		int result = 1;
+		result = prime * result + remotePort;
+		result = prime * result + ((remoteRegistryKey == null) ? 0 : remoteRegistryKey.hashCode());
+		return result;
 	}
 
-	private boolean started = false;
-
-	synchronized void start() {
-		if (started)
-			return;
-		started = true;
-		receiver.setDaemon(true);
-		transmitter.setDaemon(true);
-		receiver.start();
-		transmitter.start();
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		return false;
 	}
-
-	/**
-	 * Executes the handshake with the remote {@link RMIHandler}. During the
-	 * handshake pahase the handlers exchange the registry keys, the registry
-	 * listener port and the authentication information. This function act the
-	 * handshake and validate the authentication of the remote handler on the local
-	 * registry. It also ensures that authentication was successful on the remote
-	 * side.
-	 * 
-	 * @throws IOException                   if an I/O error occurs
-	 * @throws LocalAuthenticationException  if the local {@link RMIHandler} cannot
-	 *                                       authenticate the remote one
-	 * @throws RemoteAuthenticationException if the remote {@link RMIHandler} cannot
-	 *                                       authenticate the local one
-	 */
-	private void handshake(OutputStream output, InputStream input)
-			throws LocalAuthenticationException, RemoteAuthenticationException, IOException {
-		DataOutputStream outputStream = new DataOutputStream(output);
-		DataInputStream inputStream = new DataInputStream(input);
-
-		// checks that on the other side of the connection there is a handler that uses
-		// the same registry of this one
-		outputStream.writeUTF(rmiRegistry.registryKey);
-		outputStream.writeInt(rmiRegistry.getListenerPort());
-		outputStream.flush();
-
-		remoteRegistryKey = inputStream.readUTF();
-		remotePort = inputStream.readInt();
-
-		if (Debug.RMI_HANDLER)
-			System.out.println("[new handler] remoteAddress=" + socket.getInetAddress().getHostAddress()
-					+ ", remotePort=" + remotePort);
-
-		if (remotePort != 0)
-			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), remotePort);
-		else
-			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
-
-		if (remoteRegistryKey.equals(rmiRegistry.registryKey) && socket.getInetAddress().getCanonicalHostName()
-				.equals(InetAddress.getLocalHost().getCanonicalHostName())) {
-			sameRegistryAuthentication = true;
-			outputStream.writeBoolean(true);
-			outputStream.flush();
-		} else {
-			sameRegistryAuthentication = false;
-			outputStream.writeBoolean(false);
-			outputStream.flush();
-		}
-
-		if (inputStream.readBoolean()) // the remote handler recognized the registry key
-			return;
-
-		// if on the other side there is not the same registry of this handler, do
-		// normal authentication
-		outputStream.writeUTF(authIdentifier);
-		outputStream.writeUTF(authPassphrase);
-		outputStream.flush();
-
-		String authPass;
-		try {
-			remoteAuthIdentifier = inputStream.readUTF();
-			authPass = inputStream.readUTF();
-		} catch (Exception e) {
-			e.printStackTrace();
-			try {
-				outputStream.writeBoolean(false);
-				outputStream.flush();
-			} catch (IOException e1) {
-			}
-			throw new LocalAuthenticationException();
-		}
-
-		if (rmiRegistry.getAuthenticator() == null
-				|| rmiRegistry.getAuthenticator().authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
-			try {
-				outputStream.writeBoolean(true);
-				outputStream.flush();
-			} catch (IOException e1) {
-			}
-		} else {
-			try {
-				outputStream.writeBoolean(false);
-				outputStream.flush();
-			} catch (IOException e1) {
-			}
-			throw new LocalAuthenticationException();
-		}
-
-		boolean authResult = inputStream.readBoolean();
-
-		if (!authResult)
-			throw new RemoteAuthenticationException();
-	}
-
-	/**
-	 * Gets the key of the remote RMI registry
-	 * 
-	 * @return the key of the remote RMI registry
-	 */
-	String getRemoteRegistryKey() {
-		return remoteRegistryKey;
-	}
-
-	/**
-	 * Gets the rmiRegistry used by this {@link RMIHandler}
-	 * 
-	 * @return the rmiRegistry used by this peer
-	 */
-	RMIRegistry getRmiRegistry() {
-		return rmiRegistry;
-	}
-
-	private Exception dispositionException = null;
-
-	private void forceInvocationReturn(InvocationMessage invocation) {
-		if (rmiRegistry.isRemoteExceptionEnabled()) {
-//			if (dispositionException == null)
-//				dispositionException = new RemoteException();
-			invocation.thrownException = new RemoteException();
-		}
-		invocation.signalResult();
-	}
-
-	/**
-	 * Package-level operation used by stub invocation handlers to put new
-	 * invocations
-	 * 
-	 * @param invocation the invocation request
-	 * @throws InterruptedException
-	 */
-	synchronized void putMessage(RMIMessage rmiMessage) throws InterruptedException {
-		if (disposed) {
-			if (rmiMessage instanceof InvocationMessage) {
-				forceInvocationReturn((InvocationMessage) rmiMessage);
-			}
-			if (rmiMessage instanceof RemoteInterfaceMessage) {
-				((RemoteInterfaceMessage) rmiMessage).signalResult();
-			}
-			return;
-		}
-		if (codebasesModification != rmiRegistry.getRmiClassLoader().getModificationNumber()) {
-			Set<URL> codebases = new HashSet<>(rmiRegistry.getRmiClassLoader().getCodebases());
-			codebasesModification = rmiRegistry.getRmiClassLoader().getModificationNumber();
-			if (!codebases.isEmpty()) {
-				CodebaseUpdateMessage cbhandle = new CodebaseUpdateMessage();
-				cbhandle.codebases = codebases;
-				messageQueue.put(cbhandle);
-			}
-		}
-		messageQueue.put(rmiMessage);
-	}
-
-	private TransmitterThread transmitter = new TransmitterThread();
-
-	private ReceiverThread receiver = new ReceiverThread();
 
 	/**
 	 * This is the thread that manages the output stream of the connection only. It
@@ -636,6 +683,7 @@ public final class RMIHandler {
 						// release invocation
 						InvocationMessage invocation = (InvocationMessage) rmiMessage;
 						invocation.thrownException = new RemoteException(exception);
+						invocation.success = false;
 						invocation.signalResult();
 					}
 				}
@@ -644,7 +692,7 @@ public final class RMIHandler {
 					return;
 
 				dispositionException = e;
-				dispose(true);
+				dispose(true, true);
 			}
 		}
 	}
@@ -680,7 +728,7 @@ public final class RMIHandler {
 						ReturnMessage retHandle = new ReturnMessage();
 						retHandle.thrownException = e;
 						putMessage(retHandle);
-						Thread.sleep(rmiRegistry.getDgcLeaseValue());
+						Thread.sleep(registry.getLeaseValue());
 						throw e; // connection is broken
 					}
 
@@ -689,7 +737,7 @@ public final class RMIHandler {
 						InvocationMessage invocation = (InvocationMessage) rmiMessage;
 
 						// get the skeleton
-						Skeleton skeleton = rmiRegistry.getSkeleton(invocation.objectId);
+						Skeleton skeleton = registry.getSkeleton(invocation.objectId);
 
 						// retrieve the object
 						Object object = skeleton.getObject();
@@ -698,8 +746,8 @@ public final class RMIHandler {
 						Method method = object.getClass().getMethod(invocation.method, invocation.parameterTypes);
 
 						// get authorization
-						boolean authorized = sameRegistryAuthentication || rmiRegistry.getAuthenticator() == null
-								|| rmiRegistry.getAuthenticator().authorize(remoteAuthIdentifier, object, method);
+						boolean authorized = sameRegistryAuthentication || registry.getAuthenticator() == null
+								|| registry.getAuthenticator().authorize(remoteAuthIdentifier, object, method);
 
 						// if authorized, starts the delegation thread
 						if (authorized) {
@@ -770,6 +818,7 @@ public final class RMIHandler {
 							invocation.returnClass = ret.returnClass;
 							invocation.returnValue = ret.returnValue;
 							invocation.thrownException = ret.thrownException;
+							invocation.success = true;
 
 							// notify the invocation handler that is waiting on it
 							invocation.signalResult();
@@ -779,14 +828,14 @@ public final class RMIHandler {
 
 					} else if (rmiMessage instanceof FinalizeMessage) {
 						FinalizeMessage finHandle = (FinalizeMessage) rmiMessage;
-						Skeleton sk = rmiRegistry.getSkeleton(finHandle.objectId);
+						Skeleton sk = registry.getSkeleton(finHandle.objectId);
 						if (sk != null)
 							sk.removeRef(RMIHandler.this);
 
 					} else if (rmiMessage instanceof NewReferenceMessage) {
 						NewReferenceMessage newReferenceMessage = (NewReferenceMessage) rmiMessage;
 						if (newReferenceMessage.objectId != null) {
-							Skeleton sk = rmiRegistry.getSkeleton(newReferenceMessage.objectId);
+							Skeleton sk = registry.getSkeleton(newReferenceMessage.objectId);
 							sk.addRef(RMIHandler.this);
 							references.add(sk.getId());
 						}
@@ -794,7 +843,7 @@ public final class RMIHandler {
 					} else if (rmiMessage instanceof RemoteInterfaceMessage) {
 						RemoteInterfaceMessage rih = (RemoteInterfaceMessage) rmiMessage;
 						if (rih.interfaces == null) {
-							List<Class<?>> remotes = rmiRegistry.getRemoteInterfaces(rih.objectId);
+							List<Class<?>> remotes = registry.getRemoteInterfaces(rih.objectId);
 							rih.interfaces = new Class<?>[remotes.size()];
 							rih.interfaces = remotes.toArray(rih.interfaces);
 							putMessage(rih);
@@ -805,7 +854,7 @@ public final class RMIHandler {
 						}
 
 					} else if (rmiMessage instanceof CodebaseUpdateMessage) {
-						if (rmiRegistry.isCodeMobilityEnabled()) {
+						if (registry.isCodeMobilityEnabled()) {
 							CodebaseUpdateMessage codebaseUpdateMessage = (CodebaseUpdateMessage) rmiMessage;
 							inputStream.setRemoteCodebases(codebaseUpdateMessage.codebases);
 						}
@@ -832,8 +881,9 @@ public final class RMIHandler {
 					return;
 
 				dispositionException = e;
-				dispose(true);
+				dispose(true, true);
 			}
 		}
 	}
+
 }

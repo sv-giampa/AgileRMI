@@ -25,7 +25,7 @@ import java.net.Socket;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -52,6 +53,7 @@ import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.RMIFaultHandler;
 import agilermi.configuration.Remote;
+import agilermi.configuration.StubRetriever;
 import agilermi.exception.RemoteException;
 
 /**
@@ -86,15 +88,13 @@ public final class RMIRegistry {
 	// identifies the current instance of RMIRegistry. It serves to avoid loop-back
 	// connections and to replace remote pointer that point to an object on this
 	// same registry with their local instance
-	final String registryKey;
-
-	private boolean unmodifiable = false;
+	private final String registryKey;
 
 	// lock for synchronized access to this instance
 	private Object lock = new Object();
 
 	// codebases for code mobility
-	RMIClassLoader rMIClassLoader;
+	private RMIClassLoader rmiClassLoader;
 
 	private boolean codeMobilityEnabled = false;
 
@@ -114,8 +114,9 @@ public final class RMIRegistry {
 	private ServerSocketFactory serverSocketFactory;
 	private SocketFactory socketFactory;
 
-	// failure observers
-	private Set<RMIFaultHandler> rMIFaultHandlers = new HashSet<>();
+	// currently attached fault handler
+	private Set<RMIFaultHandler> rmiFaultHandlers = Collections
+			.newSetFromMap(new WeakHashMap<RMIFaultHandler, Boolean>());
 
 	// enable the stubs to throw a remote exception when invoked after a connection
 	// failure
@@ -125,10 +126,10 @@ public final class RMIRegistry {
 	private Set<Class<?>> remotes = new HashSet<>();
 
 	// map: object -> skeleton
-	Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
+	private Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
 
 	// map: identifier -> skeleton
-	Map<String, Skeleton> skeletonById = new HashMap<>();
+	private Map<String, Skeleton> skeletonById = new HashMap<>();
 
 	// filter factory used to customize network communication streams
 	private ProtocolEndpointFactory protocolEndpointFactory;
@@ -139,9 +140,14 @@ public final class RMIRegistry {
 	// map: "address:port" -> "authIdentifier:authPassphrase"
 	private Map<String, String[]> authenticationMap = new TreeMap<>();
 
-	private int dgcLeaseValue = 30000;
+	private int leaseValue = 30000;
 
 	private ClassLoaderFactory classLoaderFactory;
+
+	// rmiAuthenticator objects that authenticates and authorize users
+	private RMIAuthenticator rmiAuthenticator;
+
+	private boolean finalized = false;
 
 	/**
 	 * Defines the main thread that accepts new incoming connections and creates
@@ -154,73 +160,16 @@ public final class RMIRegistry {
 			while (listener != null && !listener.isInterrupted())
 				try {
 					Socket socket = serverSocket.accept();
-					RMIHandler rMIHandler = new RMIHandler(socket, RMIRegistry.this, protocolEndpointFactory);
-					if (!handlers.containsKey(rMIHandler.getInetSocketAddress()))
-						handlers.put(rMIHandler.getInetSocketAddress(), new ArrayList<>(1));
-					handlers.get(rMIHandler.getInetSocketAddress()).add(rMIHandler);
-					rMIHandler.start();
+					RMIHandler rmiHandler = new RMIHandler(socket, RMIRegistry.this, protocolEndpointFactory, false);
+					if (!handlers.containsKey(rmiHandler.getInetSocketAddress()))
+						handlers.put(rmiHandler.getInetSocketAddress(), new ArrayList<>(1));
+					handlers.get(rmiHandler.getInetSocketAddress()).add(rmiHandler);
+					rmiHandler.start();
 				} catch (IOException e) {
 					// e.printStackTrace();
 				}
 		};
 	};
-
-	private boolean finalized = false;
-
-	/**
-	 * Defines the {@link RMIFaultHandler} used to manage the peer which closed the
-	 * connection
-	 */
-	RMIFaultHandler rMIFaultHandler = new RMIFaultHandler() {
-		@Override
-		public void onFault(RMIHandler rMIHandler, Exception exception) {
-			if (finalized)
-				return;
-			List<RMIHandler> list = handlers.get(rMIHandler.getInetSocketAddress());
-			if (list != null)
-				list.remove(rMIHandler);
-		}
-	};
-
-	// rMIAuthenticator objects that authenticates and authorize users
-	private RMIAuthenticator rMIAuthenticator;
-
-	/**
-	 * Package-level method to get authentication relative to a remote process.
-	 * 
-	 * @param host the remote host
-	 * @param port the remote port
-	 * 
-	 * @return String array that has authentication identifier at the 0 position and
-	 *         the authentication pass-phrase at the 1 position or null if no
-	 *         authentication has been specified for the rmeote process
-	 * 
-	 */
-	String[] getAuthentication(String host, int port) {
-		try {
-			InetAddress address = InetAddress.getByName(host);
-			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
-		}
-		String key = host + ":" + port;
-		return authenticationMap.get(key);
-	}
-
-	/**
-	 * Package-level method to get authentication relative to a remote process.
-	 * 
-	 * @param address the remote address
-	 * @param port    the remote port
-	 * 
-	 * @return String array that has authentication identifier at the 0 position and
-	 *         the authentication pass-phrase at the 1 position or null if no
-	 *         authentication has been specified for the rmeote process
-	 */
-	String[] getAuthentication(InetAddress address, int port) {
-		String host = address.getCanonicalHostName();
-		String key = host + ":" + port;
-		return authenticationMap.get(key);
-	}
 
 	/**
 	 * Creates a new {@link RMIRegistry.Builder} instance, used to configure and
@@ -276,17 +225,11 @@ public final class RMIRegistry {
 
 		private int dgcLeaseValue = 30000;
 
-		private Collection<String> authentications = new HashSet<>();
-
-		private boolean multiConnectionMode = false;
-
-		private boolean unmodifiable = false;
-
 		/**
 		 * Sets the lease timeout after that the distributed garbage collection
 		 * mechanism will remove a non-named object from the registry.
 		 * 
-		 * @param dgcLeaseValue the lease timeout value in milliseconds
+		 * @param leaseValue the lease timeout value in milliseconds
 		 */
 		public void setDgcLeaseValue(int dgcLeaseValue) {
 			this.dgcLeaseValue = dgcLeaseValue;
@@ -364,7 +307,7 @@ public final class RMIRegistry {
 		 * Set an {@link RMIAuthenticator} object that intercept authentication and
 		 * authorization requests from remote machines.
 		 * 
-		 * @param rMIAuthenticator the {@link RMIAuthenticator} instance to use
+		 * @param rmiAuthenticator the {@link RMIAuthenticator} instance to use
 		 * @return this builder
 		 */
 		public Builder setAuthenticator(RMIAuthenticator rMIAuthenticator) {
@@ -427,7 +370,7 @@ public final class RMIRegistry {
 	 * @param protocolEndpointFactory the {@link ProtocolEndpointFactory} instance
 	 *                                that gives the streams in which the underlying
 	 *                                communication streams will be wrapped in
-	 * @param rMIAuthenticator        an {@link RMIAuthenticator} instance that
+	 * @param rmiAuthenticator        an {@link RMIAuthenticator} instance that
 	 *                                allows to authenticate and authorize users of
 	 *                                incoming connection. For example, this
 	 *                                instance can be an adapter that access a
@@ -454,13 +397,13 @@ public final class RMIRegistry {
 		this.serverSocketFactory = serverSocketFactory;
 		this.socketFactory = socketFactory;
 		this.protocolEndpointFactory = protocolEndpointFactory;
-		this.rMIAuthenticator = rMIAuthenticator;
+		this.rmiAuthenticator = rMIAuthenticator;
 		this.codeMobilityEnabled = codeMobilityEnabled;
 		if (classLoaderFactory == null)
 			classLoaderFactory = new URLClassLoaderFactory();
 		this.classLoaderFactory = classLoaderFactory;
-		this.rMIClassLoader = new RMIClassLoader(codebases, classLoaderFactory);
-		this.dgcLeaseValue = dgcLeaseValue;
+		this.rmiClassLoader = new RMIClassLoader(codebases, classLoaderFactory);
+		this.leaseValue = dgcLeaseValue;
 	}
 
 	/**
@@ -479,18 +422,18 @@ public final class RMIRegistry {
 	 * 
 	 * @return the lease timeout value in milliseconds
 	 */
-	public int getDgcLeaseValue() {
-		return dgcLeaseValue;
+	public int getLeaseValue() {
+		return leaseValue;
 	}
 
 	/**
 	 * Sets the lease timeout after that the distributed garbage collection
 	 * mechanism will remove a non-named object from the registry.
 	 * 
-	 * @param dgcLeaseValue the lease timeout value in milliseconds
+	 * @param leaseValue the lease timeout value in milliseconds
 	 */
-	public void setDgcLeaseValue(int dgcLeaseValue) {
-		this.dgcLeaseValue = dgcLeaseValue;
+	public void setLeaseValue(int dgcLeaseValue) {
+		this.leaseValue = dgcLeaseValue;
 	}
 
 	/**
@@ -500,7 +443,7 @@ public final class RMIRegistry {
 	 * @return all actually used codebases
 	 */
 	public Set<URL> getCodebases() {
-		return rMIClassLoader.getCodebases();
+		return getRmiClassLoader().getCodebases();
 	}
 
 	/**
@@ -512,7 +455,7 @@ public final class RMIRegistry {
 		if (urls == null)
 			return;
 		for (URL url : urls)
-			rMIClassLoader.addCodebase(url);
+			getRmiClassLoader().addCodebase(url);
 	}
 
 	/**
@@ -524,7 +467,7 @@ public final class RMIRegistry {
 		if (urls == null)
 			return;
 		for (URL url : urls)
-			rMIClassLoader.addCodebase(url);
+			getRmiClassLoader().addCodebase(url);
 	}
 
 	/**
@@ -535,11 +478,11 @@ public final class RMIRegistry {
 	public void addCodebase(URL url) {
 		if (url == null)
 			return;
-		rMIClassLoader.addCodebase(url);
+		getRmiClassLoader().addCodebase(url);
 	}
 
 	public void removeCodebase(URL url) {
-		rMIClassLoader.removeCodebase(url);
+		getRmiClassLoader().removeCodebase(url);
 	}
 
 	/**
@@ -550,7 +493,7 @@ public final class RMIRegistry {
 	 * @return the {@link RMIClassLoader} instance used by this registry
 	 */
 	public RMIClassLoader getRmiClassLoader() {
-		return rMIClassLoader;
+		return rmiClassLoader;
 	}
 
 	/**
@@ -631,7 +574,6 @@ public final class RMIRegistry {
 	public void finalize(boolean signalHandlersFailures) {
 		synchronized (lock) {
 			disableListener();
-
 			finalized = true;
 			for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext(); it.remove())
 				for (RMIHandler rMIHandler : handlers.get(it.next()))
@@ -658,6 +600,31 @@ public final class RMIRegistry {
 	 */
 	public void setMultiConnectionMode(boolean multiConnectionMode) {
 		this.multiConnectionMode = multiConnectionMode;
+	}
+
+	/**
+	 * Gets a {@link StubRetriever} instance linked to this registry
+	 * 
+	 * @return a {@link StubRetriever} object
+	 */
+	public StubRetriever getStubRetriever() {
+		return new StubRetriever() {
+			@Override
+			public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces)
+					throws IOException {
+				return RMIRegistry.this.getStub(address, port, objectId, stubInterfaces);
+			}
+
+			@Override
+			public Object getStub(String address, int port, String objectId) throws IOException, InterruptedException {
+				return RMIRegistry.this.getStub(address, port, objectId);
+			}
+
+			@Override
+			public String toString() {
+				return "{[StubRetriever] registryKey=" + registryKey + "}";
+			}
+		};
 	}
 
 	/**
@@ -786,20 +753,23 @@ public final class RMIRegistry {
 	 */
 	public RMIHandler getRMIHandler(String host, int port, boolean newConnection) throws IOException {
 		Callable<RMIHandler> callable = () -> {
-			synchronized (handlers) {
+			synchronized (lock) {
 				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
 				if (!handlers.containsKey(inetAddress))
 					handlers.put(inetAddress, new ArrayList<>(1));
-				List<RMIHandler> rMIHandlers = handlers.get(inetAddress);
-				RMIHandler rMIHandler = null;
-				if (rMIHandlers.size() == 0 || newConnection) {
-					rMIHandler = new RMIHandler(socketFactory.createSocket(host, port), RMIRegistry.this,
-							protocolEndpointFactory);
-					rMIHandlers.add(rMIHandler);
-					rMIHandler.start();
-				}
-				rMIHandler = rMIHandlers.get(0);
-				return rMIHandler;
+				List<RMIHandler> rmiHandlers = handlers.get(inetAddress);
+				RMIHandler rmiHandler = null;
+				if (rmiHandlers.size() == 0 || newConnection) {
+					rmiHandler = new RMIHandler(socketFactory.createSocket(host, port), RMIRegistry.this,
+							protocolEndpointFactory, true);
+
+					// bind handler to host
+					rmiHandlers.add(rmiHandler);
+
+					rmiHandler.start();
+				} else
+					rmiHandler = rmiHandlers.get(0);
+				return rmiHandler;
 			}
 		};
 
@@ -815,15 +785,15 @@ public final class RMIRegistry {
 
 	public void closeAllConnections(String host, int port) throws IOException {
 		Callable<Void> callable = () -> {
-			synchronized (handlers) {
+			synchronized (lock) {
 				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
 				if (!handlers.containsKey(inetAddress))
 					return null;
-				List<RMIHandler> rMIHandlers = handlers.get(inetAddress);
-				for (RMIHandler hnd : rMIHandlers) {
+				List<RMIHandler> rmiHandlers = handlers.get(inetAddress);
+				for (RMIHandler hnd : rmiHandlers) {
 					hnd.dispose(true);
 				}
-				rMIHandlers.clear();
+				rmiHandlers.clear();
 			}
 			return null;
 		};
@@ -845,12 +815,12 @@ public final class RMIRegistry {
 	 * @param port   the port to start the listener on
 	 * @param daemon if true, the listener is started as daemon, that is it will be
 	 *               stopped when all other non-daemon threads in the application
-	 *               will bterminated.
+	 *               will be terminated.
 	 * @throws IOException if I/O errors occur
 	 */
 	public void enableListener(int port, boolean daemon) throws IOException {
 		Callable<Void> callable = () -> {
-			synchronized (serverSocketFactory) {
+			synchronized (lock) {
 				if (listener != null)
 					disableListener();
 				serverSocket = serverSocketFactory.createServerSocket(port);
@@ -875,7 +845,7 @@ public final class RMIRegistry {
 	 */
 	public void disableListener() {
 		Callable<Void> callable = () -> {
-			synchronized (serverSocketFactory) {
+			synchronized (lock) {
 				if (listener == null)
 					return null;
 
@@ -907,12 +877,12 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Gets the rMIAuthenticator of this registry
+	 * Gets the rmiAuthenticator of this registry
 	 * 
-	 * @return the rMIAuthenticator associated to this registry
+	 * @return the rmiAuthenticator associated to this registry
 	 */
 	public RMIAuthenticator getAuthenticator() {
-		return rMIAuthenticator;
+		return rmiAuthenticator;
 	}
 
 	/**
@@ -951,16 +921,16 @@ public final class RMIRegistry {
 	public void publish(String name, Object object) {
 		try {
 			executorService.submit(() -> {
-				synchronized (skeletonById) {
+				synchronized (lock) {
 					if (name.startsWith(Skeleton.IDENTIFIER_PREFIX))
 						throw new IllegalArgumentException("The used identifier prefix '" + Skeleton.IDENTIFIER_PREFIX
 								+ "' is reserved to atomatic referencing. Please use another identifier pattern.");
 
 					Skeleton sk = null;
-					if (skeletonByObject.containsKey(object)) {
-						sk = skeletonByObject.get(object);
+					if (getSkeletonByObjectMap().containsKey(object)) {
+						sk = getSkeletonByObjectMap().get(object);
 
-						if (skeletonById.containsKey(name) && skeletonById.get(name) != sk)
+						if (getSkeletonByIdMap().containsKey(name) && getSkeletonByIdMap().get(name) != sk)
 							throw new IllegalArgumentException(
 									"the given object name '" + name + "' is already bound.");
 
@@ -968,14 +938,14 @@ public final class RMIRegistry {
 							throw new IllegalStateException(
 									"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
 					} else {
-						if (skeletonById.containsKey(name))
+						if (getSkeletonByIdMap().containsKey(name))
 							throw new IllegalArgumentException(
 									"the given object name '" + name + "' is already bound.");
 						sk = new Skeleton(object, this);
-						skeletonById.put(sk.getId(), sk);
-						skeletonByObject.put(object, sk);
+						getSkeletonByIdMap().put(sk.getId(), sk);
+						getSkeletonByObjectMap().put(object, sk);
 					}
-					skeletonById.put(name, sk);
+					getSkeletonByIdMap().put(name, sk);
 					sk.addNames(name);
 				}
 			}).get();
@@ -996,17 +966,17 @@ public final class RMIRegistry {
 	public String publish(Object object) {
 		try {
 			return executorService.submit(() -> {
-				synchronized (skeletonById) {
-					if (skeletonByObject.containsKey(object)) {
-						Skeleton sk = skeletonByObject.get(object);
+				synchronized (lock) {
+					if (getSkeletonByObjectMap().containsKey(object)) {
+						Skeleton sk = getSkeletonByObjectMap().get(object);
 						if (sk.getObject() != object)
 							throw new IllegalStateException(
 									"the given object is associated to a skeleton that does not references it");
 						return sk.getId();
 					} else {
 						Skeleton sk = new Skeleton(object, this);
-						skeletonById.put(sk.getId(), sk);
-						skeletonByObject.put(object, sk);
+						getSkeletonByIdMap().put(sk.getId(), sk);
+						getSkeletonByObjectMap().put(object, sk);
 						return sk.getId();
 					}
 				}
@@ -1025,12 +995,12 @@ public final class RMIRegistry {
 	 * @param object the object to unpublish
 	 */
 	public void unpublish(Object object) {
-		synchronized (skeletonById) {
-			Skeleton skeleton = skeletonByObject.remove(object);
+		synchronized (lock) {
+			Skeleton skeleton = getSkeletonByObjectMap().remove(object);
 			if (skeleton != null) {
-				skeletonById.remove(skeleton.getId());
+				getSkeletonByIdMap().remove(skeleton.getId());
 				for (String id : skeleton.names())
-					skeletonById.remove(id);
+					getSkeletonByIdMap().remove(id);
 			}
 		}
 	}
@@ -1041,8 +1011,8 @@ public final class RMIRegistry {
 	 * @param o the fault handler
 	 */
 	public void attachFaultHandler(RMIFaultHandler o) {
-		synchronized (rMIFaultHandlers) {
-			rMIFaultHandlers.add(o);
+		synchronized (lock) {
+			rmiFaultHandlers.add(o);
 		}
 	}
 
@@ -1052,8 +1022,8 @@ public final class RMIRegistry {
 	 * @param o the fault handler
 	 */
 	public void detachFailureHandler(RMIFaultHandler o) {
-		synchronized (rMIFaultHandlers) {
-			rMIFaultHandlers.remove(o);
+		synchronized (lock) {
+			rmiFaultHandlers.remove(o);
 		}
 	}
 
@@ -1064,8 +1034,8 @@ public final class RMIRegistry {
 	 * @return the remotized object
 	 */
 	public Object getRemoteObject(String objectId) {
-		synchronized (skeletonById) {
-			Skeleton skeleton = skeletonById.get(objectId);
+		synchronized (lock) {
+			Skeleton skeleton = getSkeletonByIdMap().get(objectId);
 			if (skeleton != null)
 				return skeleton.getObject();
 			else
@@ -1081,7 +1051,7 @@ public final class RMIRegistry {
 	 */
 	public String getRemoteObjectId(Object object) {
 		synchronized (lock) {
-			Skeleton skeleton = skeletonByObject.get(object);
+			Skeleton skeleton = getSkeletonByObjectMap().get(object);
 			if (skeleton != null)
 				return skeleton.getId();
 			else
@@ -1098,7 +1068,7 @@ public final class RMIRegistry {
 	 * @param remoteIf the interface to mark
 	 */
 	public void exportInterface(Class<?> remoteIf) {
-		synchronized (remotes) {
+		synchronized (lock) {
 			if (remoteIf == Remote.class)
 				throw new IllegalArgumentException("agilermi.Remote interface cannot be exported!");
 			if (!remoteIf.isInterface())
@@ -1115,7 +1085,7 @@ public final class RMIRegistry {
 	 * @param remoteIf the interface to unmark
 	 */
 	public void unexportInterface(Class<?> remoteIf) {
-		synchronized (remotes) {
+		synchronized (lock) {
 			if (Remote.class.isAssignableFrom(remoteIf))
 				throw new IllegalArgumentException(
 						"An interface that is statically defined as remote cannot be unexported.");
@@ -1143,8 +1113,15 @@ public final class RMIRegistry {
 		if (Remote.class.isAssignableFrom(remoteIf))
 			return true;
 
+		try {
+			Class<?> javaRemote = ClassLoader.getSystemClassLoader().loadClass("java.rmi.Remote");
+			if (javaRemote.isAssignableFrom(remoteIf))
+				return true;
+		} catch (ClassNotFoundException e) {
+		}
+
 		boolean isMapped;
-		synchronized (remotes) {
+		synchronized (lock) {
 			isMapped = remotes.contains(remoteIf);
 		}
 
@@ -1207,18 +1184,62 @@ public final class RMIRegistry {
 		return remoteIfs;
 	}
 
+	void fault(RMIHandler handler, boolean tryRepair, boolean signalFault) {
+		if (finalized)
+			return;
+
+		synchronized (lock) {
+			List<RMIHandler> list = handlers.get(handler.getInetSocketAddress());
+			if (list != null)
+				list.remove(handler);
+		}
+
+		if (tryRepair) {
+			if (handler.isConnectionStarter()) {
+				RMIHandler newHandler = null;
+				String host = handler.getInetSocketAddress().getHostString();
+				int port = handler.getInetSocketAddress().getPort();
+				long timeout = handler.getDispositionTime() + leaseValue;
+				while (System.currentTimeMillis() < timeout)
+					try {
+						newHandler = getRMIHandler(host, port);
+					} catch (IOException e) {
+					}
+				if (newHandler != null) {
+
+					if (!newHandler.getRemoteRegistryKey().equals(handler.getRemoteRegistryKey())) {
+						// cannot repair connection because the remote registry key changed
+						newHandler.dispose(false);
+						newHandler = null;
+					}
+
+					// signal new handler or null to stubs
+					for (RemoteInvocationHandler rih : handler.getConnectedStubs())
+						rih.replaceHandler(newHandler);
+
+					// replace old handler in this fault call
+					if (newHandler != null)
+						handler = newHandler;
+				}
+			}
+		}
+
+		if (signalFault && handler.isDisposed())
+			sendRMIHandlerFault(handler);
+	}
+
 	/**
 	 * Package-scoped. Operation used to broadcast a {@link RMIHandler} failure to
 	 * the failure observers attached to this registry
 	 * 
-	 * @param rMIHandler the object peer that caused the failure
-	 * @param exception  the exception thrown by the object peer
+	 * @param handler   the object peer that caused the failure
+	 * @param exception the exception thrown by the object peer
 	 */
-	void sendRmiHandlerFailure(RMIHandler rMIHandler, Exception exception) {
-		synchronized (rMIFaultHandlers) {
-			rMIFaultHandlers.forEach(o -> {
+	private void sendRMIHandlerFault(RMIHandler handler) {
+		synchronized (lock) {
+			rmiFaultHandlers.forEach(o -> {
 				try {
-					o.onFault(rMIHandler, exception);
+					o.onFault(handler, handler.getDispositionException());
 				} catch (Throwable e) {
 					e.printStackTrace();
 				}
@@ -1234,7 +1255,7 @@ public final class RMIRegistry {
 	 * @return the skeleton of the remote object
 	 */
 	Skeleton getSkeleton(String id) {
-		synchronized (skeletonById) {
+		synchronized (lock) {
 			return skeletonById.get(id);
 		}
 	}
@@ -1247,9 +1268,70 @@ public final class RMIRegistry {
 	 * @return the skeleton of the remote object
 	 */
 	Skeleton getSkeleton(Object object) {
-		synchronized (skeletonById) {
+		synchronized (lock) {
 			return skeletonByObject.get(object);
 		}
 	}
 
+	/**
+	 * Gets the key of this registry. This key is a randomly generated string that
+	 * is used to identify this registry in a RMI network without using the IP/Name
+	 * of the local host.
+	 * 
+	 * @return the registry key
+	 */
+	String getRegistryKey() {
+		return registryKey;
+	}
+
+	/**
+	 * Package-level method to get authentication relative to a remote process.
+	 * 
+	 * @param host the remote host
+	 * @param port the remote port
+	 * 
+	 * @return String array that has authentication identifier at the 0 position and
+	 *         the authentication pass-phrase at the 1 position or null if no
+	 *         authentication has been specified for the rmeote process
+	 * 
+	 */
+	String[] getAuthentication(String host, int port) {
+		try {
+			InetAddress address = InetAddress.getByName(host);
+			host = address.getCanonicalHostName();
+		} catch (UnknownHostException e) {
+		}
+		String key = host + ":" + port;
+		return authenticationMap.get(key);
+	}
+
+	/**
+	 * Package-level method to get authentication relative to a remote process.
+	 * 
+	 * @param address the remote address
+	 * @param port    the remote port
+	 * 
+	 * @return String array that has authentication identifier at the 0 position and
+	 *         the authentication pass-phrase at the 1 position or null if no
+	 *         authentication has been specified for the rmeote process
+	 */
+	String[] getAuthentication(InetAddress address, int port) {
+		String host = address.getCanonicalHostName();
+		String key = host + ":" + port;
+		return authenticationMap.get(key);
+	}
+
+	/**
+	 * @return the skeletonById
+	 */
+	Map<String, Skeleton> getSkeletonByIdMap() {
+		return skeletonById;
+	}
+
+	/**
+	 * @return the skeletonByObject
+	 */
+	Map<Object, Skeleton> getSkeletonByObjectMap() {
+		return skeletonByObject;
+	}
 }

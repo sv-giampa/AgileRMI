@@ -86,8 +86,8 @@ final class Skeleton {
 				} catch (InterruptedException e) {
 				} catch (ExecutionException e) {
 				}
-				rMIRegistry.skeletonByObject.put(object, this);
-				rMIRegistry.skeletonById.put(id, this);
+				rMIRegistry.getSkeletonByObjectMap().put(object, this);
+				rMIRegistry.getSkeletonByIdMap().put(id, this);
 			}
 		}
 
@@ -148,11 +148,11 @@ final class Skeleton {
 						rMIRegistry.unpublish(object);
 					}
 				}
-			}, rMIRegistry.getDgcLeaseValue(), TimeUnit.MILLISECONDS);
+			}, rMIRegistry.getLeaseValue(), TimeUnit.MILLISECONDS);
 
 			if (Debug.SKELETONS)
 				System.out.printf("[Distributed GC] removal scheduled at %d ms\n\t(Object=%s; Class=%s)\n",
-						rMIRegistry.getDgcLeaseValue(), object, object.getClass().getName());
+						rMIRegistry.getLeaseValue(), object, object.getClass().getName());
 		}
 	}
 

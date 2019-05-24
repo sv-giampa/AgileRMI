@@ -4,6 +4,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import agilermi.example.service.ClassB;
 import agilermi.example.service.Service;
 import agilermi.example.service.ServiceObserver;
 
@@ -67,6 +68,13 @@ public class ServiceImpl implements Service {
 		while (true) {
 			Thread.sleep(1000);
 		}
+	}
+
+	@Override
+	public ClassB compute(ClassB classB) {
+		System.out.println("stub getter: " + classB.getStubGetter());
+		classB.setService(this);
+		return classB;
 	}
 
 }

@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectStreamClass;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
@@ -30,6 +31,8 @@ import java.util.Map;
 import java.util.Set;
 
 import agilermi.codemobility.ClassLoaderFactory;
+import agilermi.configuration.RMIFaultHandler;
+import agilermi.configuration.StubRetriever;
 
 /**
  * This class extends the standard {@link ObjectInputStream} and it gives an RMI
@@ -55,7 +58,7 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 			ClassLoaderFactory classLoaderFactory) throws IOException {
 		super(inputStream);
 		this.rmiHandler = handler;
-		this.registry = handler.getRmiRegistry();
+		this.registry = handler.getRMIRegistry();
 		this.remoteAddress = address.getHostString();
 		this.remotePort = address.getPort();
 		this.rmiClassLoader = registry.getRmiClassLoader();
@@ -88,6 +91,10 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 
 	@Override
 	protected synchronized Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
+		if (desc.getName().equals(StubRetriever.class.getName())) {
+
+			return StubRetriever.class;
+		}
 		// tries to solve class through the system class-loaders
 		try {
 			return super.resolveClass(desc);
@@ -122,15 +129,47 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 		return super.resolveClass(desc);
 	}
 
+	private void replaceFields(Object obj) throws IOException {
+		Class<?> cls = obj.getClass();
+		try {
+			do {
+				for (Field field : cls.getDeclaredFields()) {
+					if (field.getType() == StubRetriever.class) {
+						boolean accessible = field.isAccessible();
+						field.setAccessible(true);
+						field.set(obj, registry.getStubRetriever());
+						field.setAccessible(accessible);
+					}
+					if (field.getType() == RMIFaultHandler.class) {
+						boolean accessible = field.isAccessible();
+						field.setAccessible(true);
+						RMIFaultHandler faultHandler = (RMIFaultHandler) field.get(obj);
+						if (faultHandler != null)
+							registry.attachFaultHandler(faultHandler);
+						field.setAccessible(accessible);
+					}
+				}
+			} while ((cls = cls.getSuperclass()) != null);
+		} catch (IllegalArgumentException e) {
+			e.printStackTrace();
+			throw new IOException(e);
+		} catch (IllegalAccessException e) {
+			e.printStackTrace();
+			throw new IOException(e);
+		}
+	}
+
 	@Override
 	protected Object resolveObject(Object obj) throws IOException {
+		if (obj instanceof StubRetriever)
+			return obj;
 
 		if (Proxy.isProxyClass(obj.getClass())) {
 			InvocationHandler ih = Proxy.getInvocationHandler(obj);
 
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler sih = (RemoteInvocationHandler) ih;
-				if (sih.remoteRegistryKey.equals(registry.registryKey)) {
+				if (sih.remoteRegistryKey.equals(registry.getRegistryKey())) {
 					Skeleton skeleton = registry.getSkeleton(sih.getObjectId());
 					if (skeleton != null)
 						return skeleton.getObject();
@@ -142,10 +181,11 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 				Class<?>[] interfaces = obj.getClass().getInterfaces();
 				Object found = rmiHandler.getStub(lih.getObjectId(), interfaces);
 				if (found != null)
-					obj = found;
+					return found;
 			}
 		}
 
+		replaceFields(obj);
 		return obj;
 	}
 

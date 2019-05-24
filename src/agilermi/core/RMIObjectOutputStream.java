@@ -27,13 +27,12 @@ import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.net.UnknownHostException;
 import java.util.List;
 
-import agilermi.configuration.Remote;
+import agilermi.configuration.StubRetriever;
 
 /**
  * This class extends the standard {@link ObjectInputStream} to give an object
@@ -76,29 +75,32 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			Class<?> type = objClass.getComponentType();
 			int len = Array.getLength(obj);
 			for (int i = 0; i < len; i++) {
+				if (type == StubRetriever.class)
+					return true;
+
 				Object value = Array.get(obj, i);
-				if (value != null && (rmiRegistry.isRemote(type) || (value instanceof Remote && type.isInterface())
-						|| (rmiRegistry.getRemoteObjectId(value) != null && type.isInterface())))
+				if ((value != null && rmiRegistry.isRemote(type)))
 					return true;
 			}
 		} else if (obj instanceof Serializable) {
-
 			try {
+				do {
+					Field[] fields = objClass.getDeclaredFields();
 
-				Field[] fields = objClass.getDeclaredFields();
-
-				for (Field field : fields) {
-					int modifiers = field.getModifiers();
-					if (!Modifier.isStatic(modifiers) && !Modifier.isTransient(modifiers)) {
-						field.setAccessible(true);
+					for (Field field : fields) {
 						Class<?> type = field.getType();
-						Object value = field.get(obj);
-						if (value != null
-								&& (rmiRegistry.isRemote(type) || (value instanceof Remote && type.isInterface())
-										|| (rmiRegistry.getRemoteObjectId(value) != null && type.isInterface())))
+						if (type == StubRetriever.class)
 							return true;
+
+						int modifiers = field.getModifiers();
+						if (!Modifier.isStatic(modifiers) && !Modifier.isTransient(modifiers)) {
+							field.setAccessible(true);
+							Object value = field.get(obj);
+							if ((value != null && rmiRegistry.isRemote(type)))
+								return true;
+						}
 					}
-				}
+				} while ((objClass = objClass.getSuperclass()) != null);
 			} catch (IllegalAccessException e) {
 				e.printStackTrace();
 			}
@@ -121,35 +123,58 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			Class<?> type = objClass.getComponentType();
 			int len = Array.getLength(obj);
 			Object newArray = Array.newInstance(type, len);
-			for (int i = 0; i < len; i++) {
-				Object value = Array.get(obj, i);
-				value = remotize(value, type);
-				Array.set(newArray, i, value);
+
+			if (type == StubRetriever.class) {
+				for (int i = 0; i < len; i++) {
+					Array.set(newArray, i, null);
+				}
+			} else {
+				for (int i = 0; i < len; i++) {
+					Object value = Array.get(obj, i);
+					value = remotize(value, type);
+					Array.set(newArray, i, value);
+				}
 			}
 			return newArray;
 		} else if (obj instanceof Serializable) {
-
+			boolean accessible = false;
 			try {
-				Constructor<?> defaultConstructor = objClass.getConstructor();
-				boolean accessible = defaultConstructor.isAccessible();
-				defaultConstructor.setAccessible(true);
-				Object newObj = defaultConstructor.newInstance();
-				defaultConstructor.setAccessible(accessible);
-
-				Field[] fields = objClass.getDeclaredFields();
-
-				for (Field field : fields) {
-					int modifiers = field.getModifiers();
-					if (!Modifier.isStatic(modifiers) && !Modifier.isTransient(modifiers)) {
-						accessible = field.isAccessible();
-						field.setAccessible(true);
-						Object value = field.get(obj);
-						value = remotize(value, field.getType());
-						field.set(newObj, value);
-						field.setAccessible(accessible);
-					}
+				Object shallowCopy = null;
+				Constructor<?> defaultConstructor = objClass.getDeclaredConstructor();
+				if (defaultConstructor != null) {
+					accessible = defaultConstructor.isAccessible();
+					defaultConstructor.setAccessible(true);
 				}
-				return newObj;
+				try {
+					shallowCopy = objClass.newInstance();
+				} finally {
+					if (defaultConstructor != null)
+						defaultConstructor.setAccessible(accessible);
+				}
+
+				do {
+					Field[] fields = objClass.getDeclaredFields();
+					for (Field field : fields) {
+						int modifiers = field.getModifiers();
+						if (!Modifier.isStatic(modifiers) && !Modifier.isTransient(modifiers)) {
+							accessible = field.isAccessible();
+							field.setAccessible(true);
+							Object value;
+							if (field.getType() == StubRetriever.class) {
+								value = null;
+								field.set(obj, rmiRegistry.getStubRetriever());
+							} else {
+								value = field.get(obj);
+								if (rmiRegistry.isRemote(field.getType())) {
+									value = remotize(value, field.getType());
+								}
+							}
+							field.set(shallowCopy, value);
+							field.setAccessible(accessible);
+						}
+					}
+				} while ((objClass = objClass.getSuperclass()) != null);
+				return shallowCopy;
 			} catch (IllegalAccessException e) {
 				throw new WriteAbortedException(
 						"No-arg constructor is not accessible in the class " + objClass.getName(), e);
@@ -157,8 +182,6 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 				throw new WriteAbortedException("SecurityException has been thrown", e);
 			} catch (NoSuchMethodException e) {
 				throw new WriteAbortedException("No-arg constructor not present in the class " + objClass.getName(), e);
-			} catch (InvocationTargetException e) {
-				throw new WriteAbortedException("No-arg constructor thrown an exception", e);
 			} catch (InstantiationException e) {
 				e.printStackTrace();
 			} catch (IllegalArgumentException e) {
@@ -200,6 +223,9 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 
 	private Object remotize(Object obj, Class<?> formalType) throws UnknownHostException, IOException {
 		if (obj == null)
+			return null;
+
+		if (formalType == StubRetriever.class)
 			return null;
 
 		// if necesseray routes the stub connection (if the remote machine connected to
@@ -267,6 +293,7 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 
 		if (mustRemotize(obj))
 			return remotize(obj);
+
 		return obj;
 	}
 

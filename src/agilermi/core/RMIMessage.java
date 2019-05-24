@@ -38,40 +38,6 @@ import java.util.concurrent.Semaphore;
 interface RMIMessage extends Serializable {
 }
 
-abstract class SynchronousRMIMessage implements RMIMessage {
-	private static final long serialVersionUID = 1326481035766265225L;
-	private static long nextId;
-	private long id;
-	private Object lock = new Object();
-	private boolean signaled = false;
-
-	SynchronousRMIMessage() {
-		id = nextId++;
-	}
-
-	long getId() {
-		return id;
-	}
-
-	void signalResult(SynchronousRMIMessage message) {
-		copyResult(message);
-		synchronized (lock) {
-			lock.notifyAll();
-		}
-	}
-
-	void awaitResult() throws InterruptedException {
-		synchronized (lock) {
-			while (!signaled)
-				lock.wait();
-		}
-	}
-
-	abstract boolean isResponse();
-
-	abstract void copyResult(SynchronousRMIMessage resultMessage);
-}
-
 class InterruptionMessage implements RMIMessage {
 	private static final long serialVersionUID = 4445481195634515157L;
 	public final long invocationId;
@@ -143,6 +109,7 @@ class InvocationMessage implements RMIMessage {
 	public transient Object returnValue;
 	public transient Class<?> returnClass;
 	public transient Throwable thrownException;
+	public transient boolean success;
 
 	/**
 	 * Builds an invocation handle with the given invocation identifier
