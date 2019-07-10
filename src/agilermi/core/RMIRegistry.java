@@ -104,6 +104,11 @@ public final class RMIRegistry {
 	// the reference to the main thread
 	private Thread listener;
 
+	private boolean automaticReferencing = true;
+
+	// reference to the Distributed Garbage Collector thread
+	private Thread dgc;
+
 	// the peer that are currently online
 	private Map<InetSocketAddress, List<RMIHandler>> handlers = new HashMap<>();
 
@@ -126,10 +131,10 @@ public final class RMIRegistry {
 	private Set<Class<?>> remotes = new HashSet<>();
 
 	// map: object -> skeleton
-	private Map<Object, Skeleton> skeletonByObject = new IdentityHashMap<>();
+	private Map<Object, Skeleton> skeletonByObject = Collections.synchronizedMap(new IdentityHashMap<>());
 
 	// map: identifier -> skeleton
-	private Map<String, Skeleton> skeletonById = new HashMap<>();
+	private Map<String, Skeleton> skeletonById = Collections.synchronizedMap(new HashMap<>());
 
 	// filter factory used to customize network communication streams
 	private ProtocolEndpointFactory protocolEndpointFactory;
@@ -140,7 +145,9 @@ public final class RMIRegistry {
 	// map: "address:port" -> "authIdentifier:authPassphrase"
 	private Map<String, String[]> authenticationMap = new TreeMap<>();
 
-	private int leaseValue = 30000;
+	private int latencyTime = 5000;
+
+	private int leaseTime = 10000;
 
 	private ClassLoaderFactory classLoaderFactory;
 
@@ -150,7 +157,45 @@ public final class RMIRegistry {
 	private boolean finalized = false;
 
 	/**
-	 * Defines the main thread that accepts new incoming connections and creates
+	 * Distributed Garbage Collection service task
+	 */
+	private Runnable dgcTask = new Runnable() {
+		@Override
+		public void run() {
+			try {
+				while (!Thread.currentThread().isInterrupted()) {
+					long waitTime = leaseTime;
+
+					Set<Skeleton> skeletons;
+					synchronized (skeletonByObject) {
+						skeletons = new HashSet<>(skeletonByObject.values());
+					}
+
+					for (Skeleton skeleton : skeletons) {
+						if (skeleton.names().size() > 0)
+							continue;
+						long lastUseTime = skeleton.getLastUseTime();
+						if (System.currentTimeMillis() - lastUseTime > leaseTime) {
+							skeleton.unpublish();
+						} else {
+							waitTime = Math.min(leaseTime, lastUseTime);
+						}
+					}
+
+					// invoke local garbage collector
+					System.gc();
+
+					// System.out.println("[DGC] end");
+					Thread.sleep(waitTime);
+				}
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+	};
+
+	/**
+	 * Defines the task that accepts new incoming connections and creates
 	 * {@link RMIHandler} objects
 	 */
 	private Runnable listenerTask = new Runnable() {
@@ -216,23 +261,76 @@ public final class RMIRegistry {
 		private ProtocolEndpointFactory protocolEndpointFactory;
 
 		// authentication
-		private RMIAuthenticator rMIAuthenticator;
+		private RMIAuthenticator rmiAuthenticator;
 
 		// code mobility
 		private Set<URL> codebases = new HashSet<>();
 		private boolean codeMobilityEnabled = false;
 		private ClassLoaderFactory classLoaderFactory;
 
-		private int dgcLeaseValue = 30000;
+		// Distributed Garbage Collector parameters
+		private int leaseTime = 600000;
+		private int latencyTime = 5000;
+		private boolean automaticReferencing = true;
+
+		/**
+		 * Enables or disables the automatic referencing which is the mechanism that
+		 * replace all the remote objects with its stubs when they are transmitted over
+		 * RMI streams.<br>
+		 * <br>
+		 * When automatic referencing is active, if a remote object that was not
+		 * published on the registry is transmitted as a parameter for a remote
+		 * invocation or as a return value, it is automatically published on the
+		 * registry. This mechanism requires that a Distributed Garbage Collector
+		 * service is active on this node, to remove objects that are not utilized for a
+		 * time as long as the lease time (see {@link #setLeaseTime(int)}).<br>
+		 * <br>
+		 * When the automatic referencing is not active, the framework can be used as a
+		 * plain old RPC middle-ware, where the Distributed Garbage Collection service
+		 * is off and no object can be remote without explicitly publishing it on the
+		 * RMI registry.<br>
+		 * <br>
+		 * 
+		 * Automatic referencing is enabled by default.
+		 * 
+		 * @param enable set to true to enable automatic referencig, false otherwise.
+		 * @return this builder
+		 */
+		public Builder enableAutomaticReferencing(boolean enable) {
+			this.automaticReferencing = enable;
+			return this;
+		}
 
 		/**
 		 * Sets the lease timeout after that the distributed garbage collection
-		 * mechanism will remove a non-named object from the registry.
+		 * mechanism will remove a non-named object from the registry.<br>
+		 * <br>
 		 * 
-		 * @param leaseValue the lease timeout value in milliseconds
+		 * Default value: 600000 milliseconds (10 minutes).
+		 * 
+		 * @param leaseTime the lease timeout value in milliseconds
+		 * @return this builder
 		 */
-		public void setDgcLeaseValue(int dgcLeaseValue) {
-			this.dgcLeaseValue = dgcLeaseValue;
+		public Builder setLeaseTime(int leaseTime) {
+			this.leaseTime = leaseTime;
+			return this;
+		}
+
+		/**
+		 * Sets an estimate of the TCP connection latency time. This constant is used to
+		 * determine updates across the RMI network (e.g. when a remote object has zero
+		 * pointers its removal from registry is scheduled to be executed after the
+		 * latency time passed).<br>
+		 * <br>
+		 * 
+		 * Default value: 5000 milliseconds.
+		 * 
+		 * @param latencyTime a time in milliseconds
+		 * @return this builder
+		 */
+		public Builder setLatencyTime(int latencyTime) {
+			this.latencyTime = latencyTime;
+			return this;
 		}
 
 		/**
@@ -278,12 +376,11 @@ public final class RMIRegistry {
 		}
 
 		/**
-		 * Set the class loader factory used by this registry to decode remote classes
+		 * Sets the class loader factory used by this registry to decode remote classes
 		 * when code mobility is enabled. It is necessary on some platforms that uses a
 		 * different implementation of the Java Virtual Machine.
 		 * 
 		 * @param classLoaderFactory the factory to use
-		 * 
 		 * @return this builder
 		 */
 		public Builder setClassLoaderFactory(ClassLoaderFactory classLoaderFactory) {
@@ -292,7 +389,8 @@ public final class RMIRegistry {
 		}
 
 		/**
-		 * Enable code mobility
+		 * Enable code mobility. If code mobility is enabled, this registry will accept
+		 * and download remote code.
 		 * 
 		 * @param codeMobilityEnabled true if code mobility must be enabled, false
 		 *                            otherwise
@@ -311,7 +409,7 @@ public final class RMIRegistry {
 		 * @return this builder
 		 */
 		public Builder setAuthenticator(RMIAuthenticator rMIAuthenticator) {
-			this.rMIAuthenticator = rMIAuthenticator;
+			this.rmiAuthenticator = rMIAuthenticator;
 			return this;
 		}
 
@@ -353,7 +451,8 @@ public final class RMIRegistry {
 		 */
 		public RMIRegistry build() {
 			RMIRegistry rMIRegistry = new RMIRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
-					rMIAuthenticator, codeMobilityEnabled, codebases, classLoaderFactory, dgcLeaseValue);
+					rmiAuthenticator, codeMobilityEnabled, codebases, classLoaderFactory, leaseTime, latencyTime,
+					automaticReferencing);
 			return rMIRegistry;
 		}
 	}
@@ -383,27 +482,51 @@ public final class RMIRegistry {
 	 */
 	private RMIRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
 			ProtocolEndpointFactory protocolEndpointFactory, RMIAuthenticator rMIAuthenticator,
-			boolean codeMobilityEnabled, Set<URL> codebases, ClassLoaderFactory classLoaderFactory, int dgcLeaseValue) {
-		if (serverSocketFactory == null)
-			serverSocketFactory = ServerSocketFactory.getDefault();
-		if (socketFactory == null)
-			socketFactory = SocketFactory.getDefault();
+			boolean codeMobilityEnabled, Set<URL> codebases, ClassLoaderFactory classLoaderFactory, int leaseTime,
+			int latencyTime, boolean automaticReferencing) {
 
 		Random random = new Random();
 		this.registryKey = Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong())
 				+ Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong())
 				+ Long.toHexString(random.nextLong());
 
+		if (serverSocketFactory == null)
+			serverSocketFactory = ServerSocketFactory.getDefault();
+		if (socketFactory == null)
+			socketFactory = SocketFactory.getDefault();
+		if (classLoaderFactory == null)
+			classLoaderFactory = new URLClassLoaderFactory();
+
 		this.serverSocketFactory = serverSocketFactory;
 		this.socketFactory = socketFactory;
 		this.protocolEndpointFactory = protocolEndpointFactory;
 		this.rmiAuthenticator = rMIAuthenticator;
 		this.codeMobilityEnabled = codeMobilityEnabled;
-		if (classLoaderFactory == null)
-			classLoaderFactory = new URLClassLoaderFactory();
 		this.classLoaderFactory = classLoaderFactory;
 		this.rmiClassLoader = new RMIClassLoader(codebases, classLoaderFactory);
-		this.leaseValue = dgcLeaseValue;
+		this.leaseTime = leaseTime;
+		this.latencyTime = latencyTime;
+		this.automaticReferencing = automaticReferencing;
+
+		if (automaticReferencing) {
+			// starts Distributed Garbage Collector service
+			this.dgc = new Thread(dgcTask);
+			this.dgc.setName("Distributed Garbage Collector service");
+			this.dgc.setDaemon(true);
+			this.dgc.start();
+		}
+	}
+
+	/**
+	 * 
+	 * Returns the status of the utomatic referencing. <br>
+	 * <br>
+	 * See {@link Builder#enableAutomaticReferencing(boolean)} for more information.
+	 * 
+	 * @return true if automatic referencing is enabled, false otherwise
+	 */
+	public boolean isAutomaticReferencingEnabled() {
+		return automaticReferencing;
 	}
 
 	/**
@@ -422,18 +545,26 @@ public final class RMIRegistry {
 	 * 
 	 * @return the lease timeout value in milliseconds
 	 */
-	public int getLeaseValue() {
-		return leaseValue;
+	public int getLeaseTime() {
+		return leaseTime;
 	}
 
 	/**
 	 * Sets the lease timeout after that the distributed garbage collection
 	 * mechanism will remove a non-named object from the registry.
 	 * 
-	 * @param leaseValue the lease timeout value in milliseconds
+	 * @param leaseTime the lease timeout value in milliseconds
 	 */
-	public void setLeaseValue(int dgcLeaseValue) {
-		this.leaseValue = dgcLeaseValue;
+	public void setLeaseTime(int dgcLeaseValue) {
+		this.leaseTime = dgcLeaseValue;
+	}
+
+	public int getLatencyTime() {
+		return latencyTime;
+	}
+
+	public void setLatencyTime(int latencyTime) {
+		this.latencyTime = latencyTime;
 	}
 
 	/**
@@ -919,41 +1050,31 @@ public final class RMIRegistry {
 	 *                                  that is /\#[0-9]+/
 	 */
 	public void publish(String name, Object object) {
-		try {
-			executorService.submit(() -> {
-				synchronized (lock) {
-					if (name.startsWith(Skeleton.IDENTIFIER_PREFIX))
-						throw new IllegalArgumentException("The used identifier prefix '" + Skeleton.IDENTIFIER_PREFIX
-								+ "' is reserved to atomatic referencing. Please use another identifier pattern.");
 
-					Skeleton sk = null;
-					if (getSkeletonByObjectMap().containsKey(object)) {
-						sk = getSkeletonByObjectMap().get(object);
+		if (name.startsWith(Skeleton.IDENTIFIER_PREFIX))
+			throw new IllegalArgumentException("The name prefix '" + Skeleton.IDENTIFIER_PREFIX
+					+ "' is reserved to atomatic referencing. Please use another name pattern.");
 
-						if (getSkeletonByIdMap().containsKey(name) && getSkeletonByIdMap().get(name) != sk)
-							throw new IllegalArgumentException(
-									"the given object name '" + name + "' is already bound.");
+		Skeleton sk = null;
+		if (skeletonByObject.containsKey(object)) {
+			sk = skeletonByObject.get(object);
 
-						if (sk.getObject() != object)
-							throw new IllegalStateException(
-									"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
-					} else {
-						if (getSkeletonByIdMap().containsKey(name))
-							throw new IllegalArgumentException(
-									"the given object name '" + name + "' is already bound.");
-						sk = new Skeleton(object, this);
-						getSkeletonByIdMap().put(sk.getId(), sk);
-						getSkeletonByObjectMap().put(object, sk);
-					}
-					getSkeletonByIdMap().put(name, sk);
-					sk.addNames(name);
-				}
-			}).get();
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-		} catch (ExecutionException e) {
-			throw (RuntimeException) e.getCause();
+			if (getSkeletonByIdMap().containsKey(name) && getSkeletonByIdMap().get(name) != sk)
+				throw new IllegalArgumentException("the given object name '" + name + "' is already bound.");
+
+			if (sk.getObject() != object)
+				throw new IllegalStateException(
+						"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
+		} else {
+			if (getSkeletonByIdMap().containsKey(name))
+				throw new IllegalArgumentException("the given object name '" + name + "' is already bound.");
+			sk = new Skeleton(object, this);
+			getSkeletonByIdMap().put(sk.getId(), sk);
+			skeletonByObject.put(object, sk);
 		}
+		getSkeletonByIdMap().put(name, sk);
+		sk.addNames(name);
+
 	}
 
 	/**
@@ -967,8 +1088,8 @@ public final class RMIRegistry {
 		try {
 			return executorService.submit(() -> {
 				synchronized (lock) {
-					if (getSkeletonByObjectMap().containsKey(object)) {
-						Skeleton sk = getSkeletonByObjectMap().get(object);
+					if (skeletonByObject.containsKey(object)) {
+						Skeleton sk = skeletonByObject.get(object);
 						if (sk.getObject() != object)
 							throw new IllegalStateException(
 									"the given object is associated to a skeleton that does not references it");
@@ -976,7 +1097,7 @@ public final class RMIRegistry {
 					} else {
 						Skeleton sk = new Skeleton(object, this);
 						getSkeletonByIdMap().put(sk.getId(), sk);
-						getSkeletonByObjectMap().put(object, sk);
+						skeletonByObject.put(object, sk);
 						return sk.getId();
 					}
 				}
@@ -996,7 +1117,7 @@ public final class RMIRegistry {
 	 */
 	public void unpublish(Object object) {
 		synchronized (lock) {
-			Skeleton skeleton = getSkeletonByObjectMap().remove(object);
+			Skeleton skeleton = skeletonByObject.remove(object);
 			if (skeleton != null) {
 				getSkeletonByIdMap().remove(skeleton.getId());
 				for (String id : skeleton.names())
@@ -1051,7 +1172,7 @@ public final class RMIRegistry {
 	 */
 	public String getRemoteObjectId(Object object) {
 		synchronized (lock) {
-			Skeleton skeleton = getSkeletonByObjectMap().get(object);
+			Skeleton skeleton = skeletonByObject.get(object);
 			if (skeleton != null)
 				return skeleton.getId();
 			else
@@ -1199,7 +1320,7 @@ public final class RMIRegistry {
 				RMIHandler newHandler = null;
 				String host = handler.getInetSocketAddress().getHostString();
 				int port = handler.getInetSocketAddress().getPort();
-				long timeout = handler.getDispositionTime() + leaseValue;
+				long timeout = handler.getDispositionTime() + latencyTime;
 				while (System.currentTimeMillis() < timeout)
 					try {
 						newHandler = getRMIHandler(host, port);
@@ -1209,11 +1330,12 @@ public final class RMIRegistry {
 
 					if (!newHandler.getRemoteRegistryKey().equals(handler.getRemoteRegistryKey())) {
 						// cannot repair connection because the remote registry key changed
+						// (e.g. because the remote process has been rebooted)
 						newHandler.dispose(false);
 						newHandler = null;
 					}
 
-					// signal new handler or null to stubs
+					// signal new handler or null to all stubs connected to the fallen handler
 					for (RemoteInvocationHandler rih : handler.getConnectedStubs())
 						rih.replaceHandler(newHandler);
 
@@ -1236,15 +1358,17 @@ public final class RMIRegistry {
 	 * @param exception the exception thrown by the object peer
 	 */
 	private void sendRMIHandlerFault(RMIHandler handler) {
+		Set<RMIFaultHandler> handlers;
 		synchronized (lock) {
-			rmiFaultHandlers.forEach(o -> {
-				try {
-					o.onFault(handler, handler.getDispositionException());
-				} catch (Throwable e) {
-					e.printStackTrace();
-				}
-			});
+			handlers = new HashSet<>(rmiFaultHandlers);
 		}
+		handlers.forEach(o -> {
+			try {
+				o.onFault(handler, handler.getDispositionException());
+			} catch (Throwable e) {
+				e.printStackTrace();
+			}
+		});
 	}
 
 	/**

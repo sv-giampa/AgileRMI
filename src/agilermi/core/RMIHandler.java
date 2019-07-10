@@ -52,6 +52,7 @@ import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.RMIFaultHandler;
 import agilermi.exception.AuthorizationException;
 import agilermi.exception.LocalAuthenticationException;
+import agilermi.exception.ObjectNotFoundException;
 import agilermi.exception.RemoteAuthenticationException;
 import agilermi.exception.RemoteException;
 
@@ -88,8 +89,11 @@ public final class RMIHandler {
 	// Flag that indicates if this RMIHandler has been disposed.
 	private boolean disposed = false;
 
+	// the cause of the disposition. This is null if the dispose() method was called
+	// externally.
 	private Exception dispositionException = null;
 
+	// timestamp in milliseconds of the disposition of this handler
 	private long dispositionTime = 0;
 
 	// remote references requested by the other machine
@@ -98,7 +102,7 @@ public final class RMIHandler {
 	// the authentication identifier received by the remote machine
 	private String remoteAuthIdentifier;
 
-	// authentication to send to the remote machine
+	// authentication to send to the remote machine during handshake
 	private String authIdentifier;
 	private String authPassphrase;
 
@@ -255,7 +259,7 @@ public final class RMIHandler {
 		this.registry = registry;
 		this.connectionStarter = connectionStarter;
 
-		socket.setSoLinger(true, registry.getLeaseValue());
+		socket.setSoLinger(true, registry.getLatencyTime());
 		OutputStream output = socket.getOutputStream();
 		InputStream input = socket.getInputStream();
 
@@ -547,7 +551,8 @@ public final class RMIHandler {
 
 		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
 		putMessage(msg);
-		msg.awaitResult();
+		if (!disposed)
+			msg.awaitResult();
 		return getStub(objectId, msg.interfaces);
 	}
 
@@ -633,8 +638,13 @@ public final class RMIHandler {
 					if (rmiMessage instanceof InvocationMessage) {
 						InvocationMessage invocation = (InvocationMessage) rmiMessage;
 						try {
-							outputStream.writeUnshared(rmiMessage);
-							invocations.put(invocation.id, invocation);
+							outputStream.writeUnshared(invocation);
+							invocation.success = true;
+							if (!invocation.asynch)
+								invocations.put(invocation.id, invocation);
+							else {
+								invocation.signalResult();
+							}
 						} catch (NotSerializableException e) {
 							System.out.println(invocation.method);
 							invocation.thrownException = e;
@@ -728,7 +738,7 @@ public final class RMIHandler {
 						ReturnMessage retHandle = new ReturnMessage();
 						retHandle.thrownException = e;
 						putMessage(retHandle);
-						Thread.sleep(registry.getLeaseValue());
+						Thread.sleep(registry.getLatencyTime());
 						throw e; // connection is broken
 					}
 
@@ -738,6 +748,15 @@ public final class RMIHandler {
 
 						// get the skeleton
 						Skeleton skeleton = registry.getSkeleton(invocation.objectId);
+
+						if (skeleton == null) {
+							// not authorized: send an authorization exception
+							ReturnMessage retHandle = new ReturnMessage();
+							retHandle.invocationId = invocation.id;
+							retHandle.thrownException = new ObjectNotFoundException(invocation.objectId);
+							putMessage(retHandle);
+							continue;
+						}
 
 						// retrieve the object
 						Object object = skeleton.getObject();
@@ -787,13 +806,20 @@ public final class RMIHandler {
 
 								activeInvocations.remove(invocation.id);
 
-								// send invocation response after method execution
-								while (true)
-									try {
-										messageQueue.put(retMessage);
-										return;
-									} catch (InterruptedException e) {
-									}
+								// send invocation response after method execution, if invocation is not
+								// asynchronous (the method is not annotated with @RMIAsynch)
+								if (!invocation.asynch)
+									while (true)
+										try {
+											messageQueue.put(retMessage);
+											return;
+										} catch (InterruptedException e) {
+										}
+								else if (retMessage.thrownException != null) {
+									System.err.println("RMI asynchronous method '" + method
+											+ "' (annotated with @RMIAsynch) thrown the following exception.");
+									retMessage.thrownException.printStackTrace();
+								}
 
 							});
 							delegated.setName("RMIHandler.ReceiverThread.delegated");
@@ -818,7 +844,6 @@ public final class RMIHandler {
 							invocation.returnClass = ret.returnClass;
 							invocation.returnValue = ret.returnValue;
 							invocation.thrownException = ret.thrownException;
-							invocation.success = true;
 
 							// notify the invocation handler that is waiting on it
 							invocation.signalResult();
@@ -865,6 +890,11 @@ public final class RMIHandler {
 							if (activeInvocations.containsKey(invocationId))
 								activeInvocations.get(invocationId).interrupt();
 						}
+					} else if (rmiMessage instanceof RefUseMessage) {
+						String objectId = ((RefUseMessage) rmiMessage).objectId;
+						Skeleton skeleton = registry.getSkeleton(objectId);
+						if (skeleton != null)
+							skeleton.updateLastUseTime();
 					} else {
 						throw new RuntimeException("INTERNAL ERROR: Unknown RMI message type");
 					}

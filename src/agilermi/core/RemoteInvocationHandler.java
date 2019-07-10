@@ -26,13 +26,18 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import agilermi.annotation.RMIAsynch;
+import agilermi.annotation.RMICachedResult;
 import agilermi.exception.LocalAuthenticationException;
 
 /**
@@ -54,6 +59,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private String host;
 	private int port;
 
+	private static class RMICache {
+		long time;
+		Object result;
+	}
+
+	private transient Map<Method, RMICache> cache = Collections.synchronizedMap(new HashMap<>());
+
 	private void writeObject(ObjectOutputStream out) throws IOException {
 		if (!(out instanceof RMIObjectOutputStream))
 			System.err.println("** WARNING ** in " + getClass().getName() + ".writeObject():\n"
@@ -71,6 +83,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private void readObject(ObjectInputStream in)
 			throws IOException, ClassNotFoundException, LocalAuthenticationException {
 		in.defaultReadObject();
+
+		cache = Collections.synchronizedMap(new HashMap<>());
 
 		if (in instanceof RMIObjectInputStream) {
 			RMIObjectInputStream rmiInput = (RMIObjectInputStream) in;
@@ -110,7 +124,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 				break;
 		}
 
-		// add RMI stack element
+		// add RMI stack trace element
 		newStackList.add(new StackTraceElement("============> Remote Method Invocation ============>", "", "", -1));
 
 		// add local part of stack trace
@@ -133,7 +147,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		handlerLock.lock();
 		try {
 			if (newHandler != null) {
-				this.handler = newHandler;
+				handler = newHandler;
+				handler.registerStub(this);
 				while (true)
 					try {
 						handler.putMessage(new NewReferenceMessage(objectId));
@@ -199,20 +214,41 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 	}
 
+	private void updateLastUse() {
+		RefUseMessage msg = new RefUseMessage(objectId);
+		try {
+			handler.putMessage(msg);
+		} catch (InterruptedException e) {
+		}
+	}
+
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+		boolean isAsynch = method.isAnnotationPresent(RMIAsynch.class) && method.getReturnType() == void.class;
+		boolean isCached = method.isAnnotationPresent(RMICachedResult.class) && method.getParameterTypes().length == 0;
+
+		if (isCached) {
+			if (cache.containsKey(method)) {
+				RMICache rmiCache = cache.get(method);
+				if (System.currentTimeMillis() < rmiCache.time) {
+					updateLastUse();
+					return rmiCache.result;
+				}
+			}
+		}
 
 		String methodName = method.getName();
 		Class<?>[] parameterTypes = method.getParameterTypes();
 
 		// create the invocation handle
-		InvocationMessage invocation = new InvocationMessage(objectId, methodName, parameterTypes, args);
+		InvocationMessage invocation = new InvocationMessage(objectId, methodName, parameterTypes, args, isAsynch);
 
 		// is calling hashCode? this flag is useful for hashCode caching
 		boolean hashCodeCall = methodName.equals("hashCode") && parameterTypes.length == 0;
 
 		if (Debug.INVOCATION_HANDLERS)
 			if (methodName.equals("toString")) {
+				updateLastUse();
 				return "[DEBUG toString()] Proxy:" + objectId + "@" + handler.getInetSocketAddress().getHostName() + ":"
 						+ handler.getInetSocketAddress().getPort();
 			}
@@ -230,28 +266,38 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 					if (sih.objectId.equals(objectId) && host.equals(handler.getInetSocketAddress().getHostString())
 							&& port == handler.getInetSocketAddress().getPort()) {
+						updateLastUse();
 						return Boolean.valueOf(true);
 					}
 				}
 			}
 		}
-
 		boolean finish = false;
 		do {
 			invoke(invocation);
 			if (invocation.success)
 				finish = true;
 			else {
+				boolean interrupted = false;
 				handlerLock.lock();
 				try {
-					long timeout = handler.getDispositionTime() + rmiRegistry.getLeaseValue();
+					long timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
 					while (!handlerReplaced && handler.isDisposed() && System.currentTimeMillis() < timeout)
-						handlerCondition.await(timeout - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+						try {
+							handlerCondition.await(timeout - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+						} catch (InterruptedException e) {
+							interrupted = true;
+						}
 					handlerReplaced = false;
 					finish = handler.isDisposed();
 				} finally {
 					handlerLock.unlock();
 				}
+				if (interrupted)
+					Thread.currentThread().interrupt();
+
+				if (handler.isDisposed())
+					rmiRegistry.fault(handler, true, false);
 			}
 		} while (!finish);
 
@@ -263,6 +309,21 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			if (handler.isDisposed() && methodName.equals("toString") && parameterTypes.length == 0)
 				return "[broken remote reference " + objectId + "@" + handler.getInetSocketAddress().getHostString()
 						+ ":" + handler.getInetSocketAddress().getPort() + "]";
+		} else {
+			if (isCached) {
+				RMICachedResult cached = method.getAnnotation(RMICachedResult.class);
+				RMICache rmiCache;
+				if (cache.containsKey(method)) {
+					rmiCache = cache.get(method);
+					rmiCache.result = invocation.returnValue;
+					rmiCache.time = System.currentTimeMillis() + cached.timeout();
+				} else {
+					rmiCache = new RMICache();
+					rmiCache.result = invocation.returnValue;
+					rmiCache.time = System.currentTimeMillis() + cached.timeout();
+					cache.put(method, rmiCache);
+				}
+			}
 		}
 
 		if (invocation.thrownException != null) {

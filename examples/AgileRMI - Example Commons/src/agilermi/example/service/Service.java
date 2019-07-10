@@ -1,5 +1,6 @@
 package agilermi.example.service;
 
+import agilermi.annotation.RMIAsynch;
 import agilermi.configuration.Remote;
 import agilermi.exception.RemoteException;
 
@@ -9,6 +10,7 @@ public interface Service extends Remote {
 
 	double add(double x, double y) throws RemoteException;
 
+	@RMIAsynch
 	void printlnOnServer(String message) throws RemoteException;
 
 	void startObserversCalls() throws RemoteException;

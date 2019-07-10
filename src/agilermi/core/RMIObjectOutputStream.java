@@ -27,11 +27,13 @@ import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.net.UnknownHostException;
 import java.util.List;
 
+import agilermi.configuration.Remote;
 import agilermi.configuration.StubRetriever;
 
 /**
@@ -140,13 +142,13 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			boolean accessible = false;
 			try {
 				Object shallowCopy = null;
-				Constructor<?> defaultConstructor = objClass.getDeclaredConstructor();
+				Constructor<?> defaultConstructor = objClass.getConstructor();
 				if (defaultConstructor != null) {
 					accessible = defaultConstructor.isAccessible();
 					defaultConstructor.setAccessible(true);
 				}
 				try {
-					shallowCopy = objClass.newInstance();
+					shallowCopy = defaultConstructor.newInstance();
 				} finally {
 					if (defaultConstructor != null)
 						defaultConstructor.setAccessible(accessible);
@@ -175,6 +177,10 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 					}
 				} while ((objClass = objClass.getSuperclass()) != null);
 				return shallowCopy;
+			} catch (InvocationTargetException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+
 			} catch (IllegalAccessException e) {
 				throw new WriteAbortedException(
 						"No-arg constructor is not accessible in the class " + objClass.getName(), e);
@@ -189,25 +195,26 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			}
 		}
 		return obj;
+
 	}
 
-	private InvocationMessage remotize(InvocationMessage handle) throws UnknownHostException, IOException {
-		if (handle.parameters == null)
-			return handle;
-		if (handle.parameters.length != handle.parameterTypes.length)
-			return handle;
-		Object[] parameters = new Object[handle.parameters.length];
-		System.arraycopy(handle.parameters, 0, parameters, 0, parameters.length);
+	private InvocationMessage remotize(InvocationMessage msg) throws UnknownHostException, IOException {
+		if (msg.parameters == null)
+			return msg;
+		if (msg.parameters.length != msg.parameterTypes.length)
+			return msg;
+		Object[] parameters = new Object[msg.parameters.length];
+		System.arraycopy(msg.parameters, 0, parameters, 0, parameters.length);
 
 		for (int i = 0; i < parameters.length; i++) {
-			if (handle.parameterTypes[i] == null || !handle.parameterTypes[i].isInstance(handle.parameters[i]))
+			if (msg.parameterTypes[i] == null || !msg.parameterTypes[i].isInstance(msg.parameters[i]))
 				continue;
-			parameters[i] = remotize(handle.parameters[i], handle.parameterTypes[i]);
+			parameters[i] = remotize(msg.parameters[i], msg.parameterTypes[i]);
 		}
 
-		InvocationMessage newHandle = new InvocationMessage(handle.id, handle.objectId, handle.method,
-				handle.parameterTypes, parameters);
-		return newHandle;
+		InvocationMessage newMsg = new InvocationMessage(msg.id, msg.objectId, msg.method, msg.parameterTypes,
+				parameters, msg.asynch);
+		return newMsg;
 	}
 
 	private ReturnMessage remotize(ReturnMessage handle) throws UnknownHostException, IOException {
@@ -275,6 +282,15 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 
 	@Override
 	protected Object replaceObject(Object obj) throws IOException {
+		if (!rmiRegistry.isAutomaticReferencingEnabled()) {
+			if (!(obj instanceof Serializable) && obj instanceof Remote) {
+				throw new RuntimeException(String.format("Object {%s} is a remote and non-serializable object, "
+						+ "but the automatic referencing is disabled on the RMI registry. "
+						+ "So it cannot be sent to the remote machine.", obj));
+			}
+			return obj;
+		}
+
 		if (obj instanceof String || obj instanceof Number || obj instanceof Boolean || obj instanceof Character)
 			return obj;
 

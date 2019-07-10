@@ -121,9 +121,8 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 				rmiClassLoader.addActiveCodebase(codebase, classLoader);
 				return cls;
 			} catch (Exception e) {
-				// System.out.printf("Codebase %s cannot be used to load class %s\n%s\n",
-				// codebase, desc.getName(),
-				// e.toString());
+				System.out.printf("Codebase %s cannot be used to load class %s\n%s\n", codebase, desc.getName(),
+						e.toString());
 			}
 		}
 		return super.resolveClass(desc);

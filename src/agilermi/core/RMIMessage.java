@@ -38,6 +38,15 @@ import java.util.concurrent.Semaphore;
 interface RMIMessage extends Serializable {
 }
 
+class RefUseMessage implements RMIMessage {
+	private static final long serialVersionUID = -6310823286118038927L;
+	public final String objectId;
+
+	public RefUseMessage(String objectId) {
+		this.objectId = objectId;
+	}
+}
+
 class InterruptionMessage implements RMIMessage {
 	private static final long serialVersionUID = 4445481195634515157L;
 	public final long invocationId;
@@ -104,6 +113,8 @@ class InvocationMessage implements RMIMessage {
 	// remote method parameter types
 	public Class<?>[] parameterTypes;
 
+	public boolean asynch = false;
+
 	// return values are received and never sent in an invocaion handle. They are
 	// sent through a ReturnHandle
 	public transient Object returnValue;
@@ -120,12 +131,14 @@ class InvocationMessage implements RMIMessage {
 	 * @param parameterTypes parameter types of the remote method
 	 * @param parameters     actual parameters of the invocation
 	 */
-	public InvocationMessage(long id, String objectId, String method, Class<?>[] parameterTypes, Object[] parameters) {
+	public InvocationMessage(long id, String objectId, String method, Class<?>[] parameterTypes, Object[] parameters,
+			boolean asynch) {
 		this.id = id;
 		this.objectId = objectId;
 		this.method = method;
 		this.parameterTypes = parameterTypes;
 		this.parameters = parameters;
+		this.asynch = asynch;
 	}
 
 	/**
@@ -136,12 +149,14 @@ class InvocationMessage implements RMIMessage {
 	 * @param parameterTypes parameter types of the remote method
 	 * @param parameters     actual parameters of the invocation
 	 */
-	public InvocationMessage(String objectId, String method, Class<?>[] parameterTypes, Object[] parameters) {
+	public InvocationMessage(String objectId, String method, Class<?>[] parameterTypes, Object[] parameters,
+			boolean asynch) {
 		id = nextId++;
 		this.objectId = objectId;
 		this.method = method;
 		this.parameterTypes = parameterTypes;
 		this.parameters = parameters;
+		this.asynch = asynch;
 	}
 
 	private transient Semaphore semaphore = new Semaphore(0);
