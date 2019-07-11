@@ -87,7 +87,8 @@ public final class RMIRegistry {
 
 	// identifies the current instance of RMIRegistry. It serves to avoid loop-back
 	// connections and to replace remote pointer that point to an object on this
-	// same registry with their local instance
+	// same registry with their local instance. It is used to repair broken
+	// connections, too.
 	private final String registryKey;
 
 	// lock for synchronized access to this instance
@@ -96,24 +97,18 @@ public final class RMIRegistry {
 	// codebases for code mobility
 	private RMIClassLoader rmiClassLoader;
 
-	private boolean codeMobilityEnabled = false;
+	private boolean codeMobilityEnabled;
 
 	// the server socket created by the last call to the enableListener() method
 	private ServerSocket serverSocket;
 
-	// the reference to the main thread
-	private Thread listener;
-
-	private boolean automaticReferencing = true;
-
-	// reference to the Distributed Garbage Collector thread
-	private Thread dgc;
-
-	// the peer that are currently online
-	private Map<InetSocketAddress, List<RMIHandler>> handlers = new HashMap<>();
+	private final boolean automaticReferencing;
 
 	// port of the TCP listener
 	private int listenerPort;
+
+	// the peer that are currently online
+	private Map<InetSocketAddress, List<RMIHandler>> handlers = new HashMap<>();
 
 	// socket factories
 	private ServerSocketFactory serverSocketFactory;
@@ -155,6 +150,12 @@ public final class RMIRegistry {
 	private RMIAuthenticator rmiAuthenticator;
 
 	private boolean finalized = false;
+
+	// reference to the Distributed Garbage Collector thread
+	private Thread dgc;
+
+	// the reference to the main thread
+	private Thread listener;
 
 	/**
 	 * Distributed Garbage Collection service task
@@ -217,16 +218,6 @@ public final class RMIRegistry {
 	};
 
 	/**
-	 * Creates a new {@link RMIRegistry.Builder} instance, used to configure and
-	 * start a new {@link RMIRegistry} instance.
-	 * 
-	 * @return a new {@link RMIRegistry.Builder} instance
-	 */
-	public static Builder builder() {
-		return new Builder();
-	}
-
-	/**
 	 * Builder for {@link RMIRegistry}. A new instance of this class can be returned
 	 * by the {@link RMIRegistry#builder()} static method. A new instance of this
 	 * class wraps all the defaults for {@link RMIRegistry} and allows to modify
@@ -271,7 +262,7 @@ public final class RMIRegistry {
 		// Distributed Garbage Collector parameters
 		private int leaseTime = 600000;
 		private int latencyTime = 5000;
-		private boolean automaticReferencing = true;
+		private boolean automaticReferencingEnabled = true;
 
 		/**
 		 * Enables or disables the automatic referencing which is the mechanism that
@@ -297,7 +288,7 @@ public final class RMIRegistry {
 		 * @return this builder
 		 */
 		public Builder enableAutomaticReferencing(boolean enable) {
-			this.automaticReferencing = enable;
+			this.automaticReferencingEnabled = enable;
 			return this;
 		}
 
@@ -452,7 +443,7 @@ public final class RMIRegistry {
 		public RMIRegistry build() {
 			RMIRegistry rMIRegistry = new RMIRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
 					rmiAuthenticator, codeMobilityEnabled, codebases, classLoaderFactory, leaseTime, latencyTime,
-					automaticReferencing);
+					automaticReferencingEnabled);
 			return rMIRegistry;
 		}
 	}
@@ -483,7 +474,7 @@ public final class RMIRegistry {
 	private RMIRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
 			ProtocolEndpointFactory protocolEndpointFactory, RMIAuthenticator rMIAuthenticator,
 			boolean codeMobilityEnabled, Set<URL> codebases, ClassLoaderFactory classLoaderFactory, int leaseTime,
-			int latencyTime, boolean automaticReferencing) {
+			int latencyTime, boolean automaticReferencingEnabled) {
 
 		Random random = new Random();
 		this.registryKey = Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong())
@@ -506,15 +497,25 @@ public final class RMIRegistry {
 		this.rmiClassLoader = new RMIClassLoader(codebases, classLoaderFactory);
 		this.leaseTime = leaseTime;
 		this.latencyTime = latencyTime;
-		this.automaticReferencing = automaticReferencing;
+		this.automaticReferencing = automaticReferencingEnabled;
 
-		if (automaticReferencing) {
+		if (automaticReferencingEnabled) {
 			// starts Distributed Garbage Collector service
 			this.dgc = new Thread(dgcTask);
 			this.dgc.setName("Distributed Garbage Collector service");
 			this.dgc.setDaemon(true);
 			this.dgc.start();
 		}
+	}
+
+	/**
+	 * Creates a new {@link RMIRegistry.Builder} instance, used to configure and
+	 * start a new {@link RMIRegistry} instance.
+	 * 
+	 * @return a new {@link RMIRegistry.Builder} instance
+	 */
+	public static Builder builder() {
+		return new Builder();
 	}
 
 	/**
@@ -565,6 +566,10 @@ public final class RMIRegistry {
 
 	public void setLatencyTime(int latencyTime) {
 		this.latencyTime = latencyTime;
+	}
+
+	public void setCodeMobilityEnabled(boolean codeMobilityEnabled) {
+		this.codeMobilityEnabled = codeMobilityEnabled;
 	}
 
 	/**
@@ -635,16 +640,6 @@ public final class RMIRegistry {
 	 */
 	public boolean isCodeMobilityEnabled() {
 		return codeMobilityEnabled;
-	}
-
-	/**
-	 * Set the code mobility enable flag.
-	 * 
-	 * @param codeMobilityEnabled if true, this registry will accept code from
-	 *                            remote codebases. Set it to false otherwise.
-	 */
-	public void setCodeMobilityEnabled(boolean codeMobilityEnabled) {
-		this.codeMobilityEnabled = codeMobilityEnabled;
 	}
 
 	/**

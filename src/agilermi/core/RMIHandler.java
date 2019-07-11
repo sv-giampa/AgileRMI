@@ -693,7 +693,7 @@ public final class RMIHandler {
 						// release invocation
 						InvocationMessage invocation = (InvocationMessage) rmiMessage;
 						invocation.thrownException = new RemoteException(exception);
-						invocation.success = false;
+						// invocation.success = false;
 						invocation.signalResult();
 					}
 				}
@@ -750,7 +750,7 @@ public final class RMIHandler {
 						Skeleton skeleton = registry.getSkeleton(invocation.objectId);
 
 						if (skeleton == null) {
-							// not authorized: send an authorization exception
+							// object not found
 							ReturnMessage retHandle = new ReturnMessage();
 							retHandle.invocationId = invocation.id;
 							retHandle.thrownException = new ObjectNotFoundException(invocation.objectId);
@@ -762,7 +762,16 @@ public final class RMIHandler {
 						Object object = skeleton.getObject();
 
 						// get the correct method
-						Method method = object.getClass().getMethod(invocation.method, invocation.parameterTypes);
+						Method method;
+						try {
+							method = object.getClass().getMethod(invocation.method, invocation.parameterTypes);
+						} catch (Exception e) {
+							ReturnMessage retHandle = new ReturnMessage();
+							retHandle.invocationId = invocation.id;
+							retHandle.thrownException = e;
+							putMessage(retHandle);
+							continue;
+						}
 
 						// get authorization
 						boolean authorized = sameRegistryAuthentication || registry.getAuthenticator() == null
