@@ -20,8 +20,10 @@ package agilermi.core;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.AbstractMap.SimpleEntry;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -29,7 +31,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-import agilermi.configuration.Logger;
+import agilermi.configuration.SimpleLogger;
 import agilermi.configuration.Unreferenced;
 
 /**
@@ -54,12 +56,25 @@ final class Skeleton {
 	private Set<String> names = new TreeSet<>();
 	private long lastUseTime;
 
-	private Logger logger = Logger.getDefault();
+	private SimpleLogger logger = new SimpleLogger(Skeleton.class);
 
-	Skeleton(Object object, RMIRegistry rMIRegistry) {
+	private int cacheSize;
+
+	private Map<SimpleEntry<String, Long>, Object> invocationsCache = Collections
+			.synchronizedMap(new LinkedHashMap<SimpleEntry<String, Long>, Object>(cacheSize, 0.75f, true) {
+				private static final long serialVersionUID = -6061814438769261316L;
+
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<SimpleEntry<String, Long>, Object> eldest) {
+					return size() > cacheSize;
+				}
+			});
+
+	Skeleton(Object object, RMIRegistry rmiRegistry) {
 		id = IDENTIFIER_PREFIX + (nextId++);
 		this.object = object;
-		this.rmiRegistry = rMIRegistry;
+		this.rmiRegistry = rmiRegistry;
+		this.cacheSize = rmiRegistry.getSkeletonInvocationCacheSize();
 		updateLastUseTime();
 		scheduleRemoval();
 	}
@@ -156,8 +171,8 @@ final class Skeleton {
 			}, rmiRegistry.getLatencyTime(), TimeUnit.MILLISECONDS);
 
 			if (Debug.SKELETONS)
-				logger.log("removal scheduled at %d ms\t(Object=%s; Class=%s)", rmiRegistry.getLatencyTime(), object,
-						object.getClass().getName());
+				logger.log("removal scheduled at %d ms\t(Object=%s; Class=%s)", rmiRegistry.getLatencyTime(),
+						object, object.getClass().getName());
 		}
 	}
 
@@ -189,22 +204,37 @@ final class Skeleton {
 		lastUseTime = System.currentTimeMillis();
 	}
 
-	Object invoke(String method, Class<?>[] parameterTypes, Object[] parameters) throws IllegalAccessException,
-			IllegalArgumentException, InvocationTargetException, NoSuchMethodException, SecurityException {
-
-		Method met = object.getClass().getMethod(method, parameterTypes);
+	Object invoke(String method, Class<?>[] parameterTypes, Object[] parameters, String remoteRegistryKey,
+			long invocationId) throws IllegalAccessException, IllegalArgumentException, InvocationTargetException,
+			NoSuchMethodException, SecurityException {
 
 		updateLastUseTime();
+
+		SimpleEntry<String, Long> cacheKey = new SimpleEntry<String, Long>(remoteRegistryKey, invocationId);
+
+		synchronized (invocationsCache) {
+			if (invocationsCache.containsKey(cacheKey)) {
+				return invocationsCache.get(cacheKey);
+			}
+		}
+
+		Method met = object.getClass().getMethod(method, parameterTypes);
 
 		if (Modifier.isPrivate(met.getModifiers()))
 			throw new IllegalAccessException("This method is private. It must not be accessed over RMI.");
 		if (Modifier.isStatic(met.getModifiers()))
 			throw new IllegalAccessException("This method is static. It must not be accessed over RMI.");
 
-		// set the method accessible (it becomes accessible by the library)
+		// set the method accessible (it becomes accessible from the library)
+		boolean accessible = met.isAccessible();
 		met.setAccessible(true);
-
-		return met.invoke(object, parameters);
+		try {
+			Object result = met.invoke(object, parameters);
+			invocationsCache.put(cacheKey, result);
+			return result;
+		} finally {
+			met.setAccessible(accessible);
+		}
 	}
 
 	@Override

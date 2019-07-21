@@ -31,10 +31,6 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 import agilermi.annotation.RMIAsynch;
 import agilermi.annotation.RMICachedResult;
@@ -50,14 +46,11 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private static final long serialVersionUID = 2428505156272752228L;
 
 	private String objectId;
-	private transient RMIRegistry rmiRegistry;
-	private transient RMIHandler handler;
-
-	private int hashCode;
-	final String remoteRegistryKey;
-
 	private String host;
 	private int port;
+
+	private int hashCode;
+	String remoteRegistryKey;
 
 	private static class RMICache {
 		long time;
@@ -65,6 +58,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	}
 
 	private transient Map<Method, RMICache> cache = Collections.synchronizedMap(new HashMap<>());
+	private transient RMIRegistry rmiRegistry;
+	private transient RMIHandler handler;
 
 	private void writeObject(ObjectOutputStream out) throws IOException {
 		if (!(out instanceof RMIObjectOutputStream))
@@ -90,23 +85,33 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			RMIObjectInputStream rmiInput = (RMIObjectInputStream) in;
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
 				host = rmiInput.getRemoteAddress();
-			RMIRegistry rmiRegistry = rmiInput.getRmiRegistry();
-			boolean willBeReplacedByLocalReference = remoteRegistryKey.equals(rmiRegistry.getRegistryKey())
-					&& rmiRegistry.getSkeleton(objectId) != null;
-			if (willBeReplacedByLocalReference)
-				return;
-			handler = rmiRegistry.getRMIHandler(host, port, rmiRegistry.isMultiConnectionMode());
+			rmiRegistry = rmiInput.getRmiRegistry();
 		} else {
-			handler = RMIRegistry.builder().build().getRMIHandler(host, port);
+			rmiRegistry = RMIRegistry.builder().build();
 		}
 
-		rmiRegistry = handler.getRMIRegistry();
-		handler.registerStub(this);
+		boolean willBeReplacedByLocalReference = rmiRegistry.getRegistryKey().equals(remoteRegistryKey)
+				&& rmiRegistry.getSkeleton(objectId) != null;
+
+		if (willBeReplacedByLocalReference)
+			return;
 
 		try {
-			handler.putMessage(new NewReferenceMessage(objectId));
+			getRMIHandler();
 		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
 
+	private void getRMIHandler() throws Exception {
+		try {
+			handler = rmiRegistry.getRMIHandler(host, port);
+			handler.registerStub(this);
+			handler.putMessage(new NewReferenceMessage(objectId));
+			this.remoteRegistryKey = handler.getRemoteRegistryKey();
+		} catch (Exception e) {
+			handler = null;
+			throw e;
 		}
 	}
 
@@ -125,7 +130,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		// add RMI stack trace element
-		newStackList.add(new StackTraceElement("============> Remote Method Invocation ============>", "", "", -1));
+		newStackList.add(new StackTraceElement("=====> Remote Method Invocation ======>", "", "", -1));
 
 		// add local part of stack trace
 		for (int i = 4; i < localStack.length; i++) {
@@ -139,35 +144,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		e.setStackTrace(newStack);
 	}
 
-	private Lock handlerLock = new ReentrantLock();
-	private Condition handlerCondition = handlerLock.newCondition();
-	private boolean handlerReplaced = false;
-
-	void replaceHandler(RMIHandler newHandler) {
-		handlerLock.lock();
-		try {
-			if (newHandler != null) {
-				handler = newHandler;
-				handler.registerStub(this);
-				while (true)
-					try {
-						handler.putMessage(new NewReferenceMessage(objectId));
-						break;
-					} catch (InterruptedException e) {
-					}
-			}
-			handlerReplaced = true;
-			handlerCondition.signalAll();
-		} finally {
-			handlerLock.unlock();
-		}
-	}
-
 	private void invoke(InvocationMessage invocation) {
 		boolean messageSent = false;
 		boolean isInterrupted = false;
 		boolean interruptionSent = false;
 		while (true) {
+			if (handler == null || handler.isDisposed())
+				return;
 			try {
 				if (!messageSent) {
 					handler.putMessage(invocation);
@@ -196,26 +179,23 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		return handler;
 	}
 
-	public RemoteInvocationHandler(String objectId, RMIHandler rmiHandler) {
+	public RemoteInvocationHandler(RMIRegistry rmiRegistry, String host, int port, String objectId) {
 		this.objectId = objectId;
-		this.handler = rmiHandler;
-		this.rmiRegistry = rmiHandler.getRMIRegistry();
-		this.remoteRegistryKey = rmiHandler.getRemoteRegistryKey();
-		handler.registerStub(this);
+		this.rmiRegistry = rmiRegistry;
 
-		InetSocketAddress address = handler.getInetSocketAddress();
-		host = address.getHostString();
-		port = address.getPort();
+		this.host = host;
+		this.port = port;
 
 		try {
-			handler.putMessage(new NewReferenceMessage(objectId));
-		} catch (InterruptedException e) {
-			e.printStackTrace();
+			getRMIHandler();
+		} catch (Exception e) {
+
 		}
+
 	}
 
 	private void updateLastUse() {
-		RefUseMessage msg = new RefUseMessage(objectId);
+		ReferenceUseMessage msg = new ReferenceUseMessage(objectId);
 		try {
 			handler.putMessage(msg);
 		} catch (InterruptedException e) {
@@ -240,7 +220,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		String methodName = method.getName();
 		Class<?>[] parameterTypes = method.getParameterTypes();
 
-		// create the invocation handle
+		// create the invocation message
 		InvocationMessage invocation = new InvocationMessage(objectId, methodName, parameterTypes, args, isAsynch);
 
 		// is calling hashCode? this flag is useful for hashCode caching
@@ -272,57 +252,66 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 				}
 			}
 		}
-		boolean finish = false;
+
+		boolean finishInvocation = false;
 		do {
 			invoke(invocation);
-			if (invocation.success)
-				finish = true;
-			else {
-				boolean interrupted = false;
-				handlerLock.lock();
-				try {
-					long timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
-					while (!handlerReplaced && handler.isDisposed() && System.currentTimeMillis() < timeout)
-						try {
-							handlerCondition.await(timeout - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
-						} catch (InterruptedException e) {
-							interrupted = true;
-						}
-					handlerReplaced = false;
-					finish = handler.isDisposed();
-				} finally {
-					handlerLock.unlock();
-				}
-				if (interrupted)
-					Thread.currentThread().interrupt();
 
-				if (handler.isDisposed())
-					rmiRegistry.fault(handler, true, false);
+			if (invocation.success) {
+				if (Debug.INVOCATION_HANDLERS)
+					System.out.println(RemoteInvocationHandler.class.getName() + " invocation success!");
+				finishInvocation = true;
+			} else {
+				if (Debug.INVOCATION_HANDLERS)
+					System.out.println(RemoteInvocationHandler.class.getName() + " invocation error!");
+
+				long timeout;
+				if (handler == null)
+					timeout = System.currentTimeMillis() + rmiRegistry.getLatencyTime();
+				else
+					timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
+
+				do {
+					try {
+						getRMIHandler();
+						if (Debug.INVOCATION_HANDLERS)
+							System.out.println(RemoteInvocationHandler.class.getName() + " handler repaired!");
+					} catch (Exception e) {
+						invocation.thrownException = e;
+						if (Debug.INVOCATION_HANDLERS)
+							System.out.println(RemoteInvocationHandler.class.getName() + " handler repair error!");
+					}
+
+					if (Debug.INVOCATION_HANDLERS) {
+						System.out.println(
+								RemoteInvocationHandler.class.getName() + " handler==null? " + (handler == null));
+						System.out.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
+								+ handler.isDisposed());
+					}
+				} while ((finishInvocation = handler == null || handler.isDisposed())
+						&& System.currentTimeMillis() < timeout);
 			}
-		} while (!finish);
+		} while (!finishInvocation);
 
 		if (invocation.returnValue == null) {
 			if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class)
 				return Boolean.valueOf(false);
 			if (methodName.equals("hashCode") && parameterTypes.length == 0)
 				return Integer.valueOf(hashCode);
-			if (handler.isDisposed() && methodName.equals("toString") && parameterTypes.length == 0)
-				return "[broken remote reference " + objectId + "@" + handler.getInetSocketAddress().getHostString()
-						+ ":" + handler.getInetSocketAddress().getPort() + "]";
-		} else {
-			if (isCached) {
-				RMICachedResult cached = method.getAnnotation(RMICachedResult.class);
-				RMICache rmiCache;
-				if (cache.containsKey(method)) {
-					rmiCache = cache.get(method);
-					rmiCache.result = invocation.returnValue;
-					rmiCache.time = System.currentTimeMillis() + cached.timeout();
-				} else {
-					rmiCache = new RMICache();
-					rmiCache.result = invocation.returnValue;
-					rmiCache.time = System.currentTimeMillis() + cached.timeout();
-					cache.put(method, rmiCache);
-				}
+			if (methodName.equals("toString") && parameterTypes.length == 0)
+				return "[broken remote reference " + objectId + "@" + host + ":" + port + "]";
+		} else if (isCached) {
+			RMICachedResult cached = method.getAnnotation(RMICachedResult.class);
+			RMICache rmiCache;
+			if (cache.containsKey(method)) {
+				rmiCache = cache.get(method);
+				rmiCache.result = invocation.returnValue;
+				rmiCache.time = System.currentTimeMillis() + cached.timeout();
+			} else {
+				rmiCache = new RMICache();
+				rmiCache.result = invocation.returnValue;
+				rmiCache.time = System.currentTimeMillis() + cached.timeout();
+				cache.put(method, rmiCache);
 			}
 		}
 
@@ -336,7 +325,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 		Class<?> returnType = method.getReturnType();
 
-		if (handler.isDisposed() && !returnType.equals(void.class) && invocation.returnValue == null) {
+		if (handler == null && handler.isDisposed() && !returnType.equals(void.class)
+				&& invocation.returnValue == null) {
 			if (returnType.isPrimitive()) {
 				if (returnType == boolean.class)
 					return false;

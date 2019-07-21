@@ -168,7 +168,7 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler sih = (RemoteInvocationHandler) ih;
-				if (sih.remoteRegistryKey.equals(registry.getRegistryKey())) {
+				if (registry.getRegistryKey().equals(sih.remoteRegistryKey)) {
 					Skeleton skeleton = registry.getSkeleton(sih.getObjectId());
 					if (skeleton != null)
 						return skeleton.getObject();

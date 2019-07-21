@@ -134,7 +134,16 @@ public final class RMIClassLoader extends ClassLoader {
 	 * 
 	 * @return a set of active codebases
 	 */
-	public synchronized Set<URL> getCodebases() {
+	public synchronized Set<URL> getCodebasesSet() {
 		return new HashSet<>(activeCodebases.values());
+	}
+
+	/**
+	 * Remove all statically known codebases.<br>
+	 * This method cannot remove instantly the static codebases whose code is
+	 * currently loaded and used in the Java Virtual Machine.
+	 */
+	public void clearCodebasesSet() {
+		staticCodebases.clear();
 	}
 }

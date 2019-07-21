@@ -324,8 +324,6 @@ public final class RMIHandler {
 		if (started)
 			return;
 		started = true;
-		receiver.setDaemon(true);
-		transmitter.setDaemon(true);
 		receiver.start();
 		transmitter.start();
 	}
@@ -366,7 +364,7 @@ public final class RMIHandler {
 			return;
 		}
 		if (codebasesModification != registry.getRmiClassLoader().getModificationNumber()) {
-			Set<URL> codebases = new HashSet<>(registry.getRmiClassLoader().getCodebases());
+			Set<URL> codebases = new HashSet<>(registry.getRmiClassLoader().getCodebasesSet());
 			codebasesModification = registry.getRmiClassLoader().getModificationNumber();
 			if (!codebases.isEmpty()) {
 				CodebaseUpdateMessage cbhandle = new CodebaseUpdateMessage();
@@ -384,92 +382,76 @@ public final class RMIHandler {
 	 * sending them the disposition exception of this handler (See
 	 * {@link #getDispositionException()}).
 	 * 
-	 * @param tryRepair   set to true to try to create a new {@link RMIHandler} used
-	 *                    as a replacement of this one. This will repair the RMI
-	 *                    connections of the stubs.
-	 * @param signalFault set to true if this {@link RMIHandler} should send a
-	 *                    signal to the {@link RMIFaultHandler} instances attached
-	 *                    to the {@link RMIRegistry} that created this instance
-	 */
-	synchronized void dispose(boolean tryRepair, boolean signalFault) {
-		if (disposed)
-			return;
-
-		dispositionTime = System.currentTimeMillis();
-		disposed = true;
-		receiver.interrupt();
-		transmitter.interrupt();
-
-		try {
-			socket.close();
-		} catch (IOException e) {
-		}
-
-		try {
-			outputStream.close();
-		} catch (IOException e1) {
-		}
-
-		try {
-			inputStream.close();
-		} catch (IOException e1) {
-		}
-
-		if (protocolEndpoint != null)
-			protocolEndpoint.connectionEnd();
-
-		// let the stubs to return
-		for (InvocationMessage handle : invocations.values()) {
-			forceInvocationReturn(handle);
-		}
-
-		// release all the handle in the handleQueue
-		// synchronized (messageQueue) {
-		for (RMIMessage message : messageQueue) {
-			if (message instanceof InvocationMessage) {
-				forceInvocationReturn((InvocationMessage) message);
-			}
-			if (message instanceof RemoteInterfaceMessage) {
-				((RemoteInterfaceMessage) message).signalResult();
-			}
-		}
-		// }
-
-		for (Iterator<String> it = references.iterator(); it.hasNext();) {
-			Skeleton sk = registry.getSkeleton(it.next());
-			if (sk != null) {
-				sk.removeAllRefs(this);
-				it.remove();
-			}
-		}
-
-		try {
-			registry.fault(this, tryRepair, signalFault);
-		} catch (Throwable e) {
-			e.printStackTrace();
-		}
-
-		socket = null;
-		outputStream = null;
-		inputStream = null;
-		invocations.clear();
-		messageQueue.clear();
-		System.gc();
-	}
-
-	/**
-	 * Dispose this {@link RMIHandler} and frees all the used resources and threads.
-	 * A call to this method can cause a callback on the {@link RMIFaultHandler}
-	 * instances attached to the {@link RMIRegistry} associated to this instance
-	 * sending them the disposition exception of this handler (See
-	 * {@link #getDispositionException()}).
-	 * 
 	 * @param signalFault set to true if this {@link RMIHandler} should send a
 	 *                    signal to the {@link RMIFaultHandler} instances attached
 	 *                    to the {@link RMIRegistry} that created this instance
 	 */
 	public void dispose(boolean signalFault) {
-		dispose(false, signalFault);
+		synchronized (this) {
+			if (disposed)
+				return;
+
+			dispositionTime = System.currentTimeMillis();
+			disposed = true;
+			receiver.interrupt();
+			transmitter.interrupt();
+
+			try {
+				socket.close();
+			} catch (IOException e) {
+			}
+
+			try {
+				outputStream.close();
+			} catch (IOException e1) {
+			}
+
+			try {
+				inputStream.close();
+			} catch (IOException e1) {
+			}
+
+			if (protocolEndpoint != null)
+				protocolEndpoint.connectionEnd();
+
+			// let the stubs to return
+			for (InvocationMessage handle : invocations.values()) {
+				forceInvocationReturn(handle);
+			}
+
+			// release all the handle in the handleQueue
+			// synchronized (messageQueue) {
+			for (RMIMessage message : messageQueue) {
+				if (message instanceof InvocationMessage) {
+					forceInvocationReturn((InvocationMessage) message);
+				}
+				if (message instanceof RemoteInterfaceMessage) {
+					((RemoteInterfaceMessage) message).signalResult();
+				}
+			}
+			// }
+
+			for (Iterator<String> it = references.iterator(); it.hasNext();) {
+				Skeleton sk = registry.getSkeleton(it.next());
+				if (sk != null) {
+					sk.removeAllRefs(this);
+					it.remove();
+				}
+			}
+
+			socket = null;
+			outputStream = null;
+			inputStream = null;
+			invocations.clear();
+			messageQueue.clear();
+		}
+
+		registry.removeRMIHandler(this);
+
+		if (signalFault)
+			registry.sendRMIHandlerFault(this);
+
+		System.gc();
 	}
 
 	/**
@@ -572,12 +554,13 @@ public final class RMIHandler {
 	public Object getStub(String objectId, Class<?>... stubInterfaces) {
 		if (disposed)
 			throw new IllegalStateException("This RMIHandler has been disposed");
+
 		if (stubInterfaces.length == 0)
 			throw new IllegalArgumentException("No interface has been passed");
 
 		Object stub;
-		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
-				new RemoteInvocationHandler(objectId, this));
+		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces, new RemoteInvocationHandler(
+				registry, inetSocketAddress.getHostString(), inetSocketAddress.getPort(), objectId));
 		return stub;
 	}
 
@@ -620,9 +603,10 @@ public final class RMIHandler {
 	 * send new method invocations to the other peer or the invocation results. It
 	 * reads new invocations from the handleQueue.
 	 */
-	private class TransmitterThread extends Thread {
+	private class TransmitterThread extends Thread implements RMIMessageHandler {
 		public TransmitterThread() {
-			setName("RMIHandler.transmitter");
+			setName(this.getClass().getName());
+			setDaemon(true);
 		}
 
 		@Override
@@ -634,53 +618,9 @@ public final class RMIHandler {
 				while (!isInterrupted()) {
 					rmiMessage = null;
 					rmiMessage = messageQueue.take();
-
-					if (rmiMessage instanceof InvocationMessage) {
-						InvocationMessage invocation = (InvocationMessage) rmiMessage;
-						try {
-							outputStream.writeUnshared(invocation);
-							invocation.success = true;
-							if (!invocation.asynch)
-								invocations.put(invocation.id, invocation);
-							else {
-								invocation.signalResult();
-							}
-						} catch (NotSerializableException e) {
-							System.out.println(invocation.method);
-							invocation.thrownException = e;
-							synchronized (invocation) {
-								invocation.signalResult();
-							}
-							throw e;
-						}
-
-					} else if (rmiMessage instanceof ReturnMessage) {
-						// send invocation response
-						ReturnMessage retm = (ReturnMessage) rmiMessage;
-						try {
-							outputStream.writeUnshared(retm);
-						} catch (NotSerializableException e) {
-							retm.returnValue = null;
-							retm.returnClass = null;
-							retm.thrownException = e;
-							outputStream.writeUnshared(retm);
-							e.printStackTrace();
-						}
-
-					} else if (rmiMessage instanceof RemoteInterfaceMessage) {
-						RemoteInterfaceMessage rim = (RemoteInterfaceMessage) rmiMessage;
-						if (rim.interfaces == null) {
-							interfaceRequests.put(rim.handleId, rim);
-						}
-						outputStream.writeUnshared(rim);
-
-					} else {
-						outputStream.writeUnshared(rmiMessage);
-					}
-
-					outputStream.flush();
+					rmiMessage.accept(this);
 				}
-			} catch (IOException | InterruptedException e) { // something gone wrong, destroy the handler
+			} catch (Exception e) { // something gone wrong, destroy the handler
 				Exception exception = e;
 				if (Debug.RMI_HANDLER) {
 					System.out.println("[RMIHandler.transmitter] transmitter thrown the following exception:");
@@ -688,22 +628,96 @@ public final class RMIHandler {
 				}
 				// exception.printStackTrace();
 
-				if (rmiMessage != null) {
-					if (rmiMessage instanceof InvocationMessage) {
-						// release invocation
-						InvocationMessage invocation = (InvocationMessage) rmiMessage;
-						invocation.thrownException = new RemoteException(exception);
-						// invocation.success = false;
-						invocation.signalResult();
-					}
-				}
+				if (rmiMessage != null)
+					messageQueue.add(rmiMessage);
 
 				if (disposed)
 					return;
 
 				dispositionException = e;
-				dispose(true, true);
+				dispose(true);
 			}
+		}
+
+		@Override
+		public void handle(ReferenceUseMessage msg) throws Exception {
+			outputStream.writeUnshared(msg);
+			outputStream.flush();
+		}
+
+		@Override
+		public void handle(InterruptionMessage msg) throws Exception {
+			outputStream.writeUnshared(msg);
+			outputStream.flush();
+		}
+
+		@Override
+		public void handle(CodebaseUpdateMessage msg) throws Exception {
+			outputStream.writeUnshared(msg);
+			outputStream.flush();
+		}
+
+		@Override
+		public void handle(InvocationMessage msg) throws Exception {
+			if (registry.getFaultSimulationProbability() > 0) {
+				double die = Math.random();
+				if (die < registry.getFaultSimulationProbability())
+					throw new IOException("Simulated fault. You have setted fault simulation through"
+							+ " the RMIRegistry.setSFaultSimulationProbability() method.");
+			}
+			try {
+				outputStream.writeUnshared(msg);
+				outputStream.flush();
+				msg.success = true;
+				if (!msg.asynch)
+					invocations.put(msg.id, msg);
+				else {
+					msg.signalResult();
+				}
+			} catch (NotSerializableException e) {
+				System.out.println(msg.method);
+				msg.thrownException = e;
+				synchronized (msg) {
+					msg.signalResult();
+				}
+				throw e;
+			}
+		}
+
+		@Override
+		public void handle(ReturnMessage msg) throws Exception {
+			// send invocation response
+			try {
+				outputStream.writeUnshared(msg);
+				outputStream.flush();
+			} catch (NotSerializableException e) {
+				msg.returnValue = null;
+				msg.returnClass = null;
+				msg.thrownException = e;
+				outputStream.writeUnshared(msg);
+				e.printStackTrace();
+			}
+		}
+
+		@Override
+		public void handle(RemoteInterfaceMessage msg) throws Exception {
+			if (msg.interfaces == null) {
+				interfaceRequests.put(msg.handleId, msg);
+			}
+			outputStream.writeUnshared(msg);
+			outputStream.flush();
+		}
+
+		@Override
+		public void handle(NewReferenceMessage msg) throws Exception {
+			outputStream.writeUnshared(msg);
+			outputStream.flush();
+		}
+
+		@Override
+		public void handle(FinalizeMessage msg) throws Exception {
+			outputStream.writeUnshared(msg);
+			outputStream.flush();
 		}
 	}
 
@@ -714,11 +728,12 @@ public final class RMIHandler {
 	 * second case it notifies the invocation handlers that are waiting for the
 	 * remote method to return.
 	 */
-	private class ReceiverThread extends Thread {
+	private class ReceiverThread extends Thread implements RMIMessageHandler {
 		private Map<Long, Thread> activeInvocations = Collections.synchronizedMap(new HashMap<>());
 
 		public ReceiverThread() {
-			setName("RMIHandler.receiver");
+			setName(this.getClass().getName());
+			this.setDaemon(true);
 		}
 
 		@Override
@@ -743,173 +758,9 @@ public final class RMIHandler {
 					}
 
 					// interpret message
-					if (rmiMessage instanceof InvocationMessage) {
-						InvocationMessage invocation = (InvocationMessage) rmiMessage;
-
-						// get the skeleton
-						Skeleton skeleton = registry.getSkeleton(invocation.objectId);
-
-						if (skeleton == null) {
-							// object not found
-							ReturnMessage retHandle = new ReturnMessage();
-							retHandle.invocationId = invocation.id;
-							retHandle.thrownException = new ObjectNotFoundException(invocation.objectId);
-							putMessage(retHandle);
-							continue;
-						}
-
-						// retrieve the object
-						Object object = skeleton.getObject();
-
-						// get the correct method
-						Method method;
-						try {
-							method = object.getClass().getMethod(invocation.method, invocation.parameterTypes);
-						} catch (Exception e) {
-							ReturnMessage retHandle = new ReturnMessage();
-							retHandle.invocationId = invocation.id;
-							retHandle.thrownException = e;
-							putMessage(retHandle);
-							continue;
-						}
-
-						// get authorization
-						boolean authorized = sameRegistryAuthentication || registry.getAuthenticator() == null
-								|| registry.getAuthenticator().authorize(remoteAuthIdentifier, object, method);
-
-						// if authorized, starts the delegation thread
-						if (authorized) {
-							Thread delegated = new Thread(() -> {
-								ReturnMessage retMessage = new ReturnMessage();
-								retMessage.invocationId = invocation.id;
-								try {
-
-									retMessage.returnValue = skeleton.invoke(invocation.method,
-											invocation.parameterTypes, invocation.parameters);
-
-									// set invocation return class
-									retMessage.returnClass = method.getReturnType();
-
-								} catch (InvocationTargetException e) {
-									// e.printStackTrace();
-									retMessage.thrownException = e.getCause();
-								} catch (NoSuchMethodException e) {
-									// e.printStackTrace();
-									retMessage.thrownException = new NoSuchMethodException("The method '"
-											+ invocation.method + "(" + Arrays.toString(invocation.parameterTypes)
-											+ ")' does not exists for the object with identifier '"
-											+ invocation.objectId + "'.");
-								} catch (SecurityException e) {
-									// e.printStackTrace();
-									retMessage.thrownException = e;
-								} catch (IllegalAccessException e) {
-									// e.printStackTrace();
-								} catch (IllegalArgumentException e) {
-									// e.printStackTrace();
-									retMessage.thrownException = e;
-								} catch (NullPointerException e) {
-									// e.printStackTrace();
-									retMessage.thrownException = new NullPointerException("The object identifier '"
-											+ invocation.objectId + "' of the stub is not bound to a remote object");
-								}
-
-								activeInvocations.remove(invocation.id);
-
-								// send invocation response after method execution, if invocation is not
-								// asynchronous (the method is not annotated with @RMIAsynch)
-								if (!invocation.asynch)
-									while (true)
-										try {
-											messageQueue.put(retMessage);
-											return;
-										} catch (InterruptedException e) {
-										}
-								else if (retMessage.thrownException != null) {
-									System.err.println("RMI asynchronous method '" + method
-											+ "' (annotated with @RMIAsynch) thrown the following exception.");
-									retMessage.thrownException.printStackTrace();
-								}
-
-							});
-							delegated.setName("RMIHandler.ReceiverThread.delegated");
-							activeInvocations.put(invocation.id, delegated);
-							delegated.start();
-						} else {
-							// not authorized: send an authorization exception
-							ReturnMessage retHandle = new ReturnMessage();
-							retHandle.invocationId = invocation.id;
-							retHandle.thrownException = new AuthorizationException();
-						}
-
-					} else if (rmiMessage instanceof ReturnMessage) {
-						ReturnMessage ret = (ReturnMessage) rmiMessage;
-
-						// remove the waiting invocation
-						InvocationMessage invocation = invocations.remove(ret.invocationId);
-
-						if (invocation != null) {
-
-							// set return
-							invocation.returnClass = ret.returnClass;
-							invocation.returnValue = ret.returnValue;
-							invocation.thrownException = ret.thrownException;
-
-							// notify the invocation handler that is waiting on it
-							invocation.signalResult();
-						} else if (ret.thrownException != null && ret.thrownException instanceof Exception) {
-							throw (Exception) ret.thrownException;
-						}
-
-					} else if (rmiMessage instanceof FinalizeMessage) {
-						FinalizeMessage finHandle = (FinalizeMessage) rmiMessage;
-						Skeleton sk = registry.getSkeleton(finHandle.objectId);
-						if (sk != null)
-							sk.removeRef(RMIHandler.this);
-
-					} else if (rmiMessage instanceof NewReferenceMessage) {
-						NewReferenceMessage newReferenceMessage = (NewReferenceMessage) rmiMessage;
-						if (newReferenceMessage.objectId != null) {
-							Skeleton sk = registry.getSkeleton(newReferenceMessage.objectId);
-							sk.addRef(RMIHandler.this);
-							references.add(sk.getId());
-						}
-
-					} else if (rmiMessage instanceof RemoteInterfaceMessage) {
-						RemoteInterfaceMessage rih = (RemoteInterfaceMessage) rmiMessage;
-						if (rih.interfaces == null) {
-							List<Class<?>> remotes = registry.getRemoteInterfaces(rih.objectId);
-							rih.interfaces = new Class<?>[remotes.size()];
-							rih.interfaces = remotes.toArray(rih.interfaces);
-							putMessage(rih);
-						} else {
-							RemoteInterfaceMessage req = interfaceRequests.get(rih.handleId);
-							req.interfaces = rih.interfaces;
-							req.signalResult();
-						}
-
-					} else if (rmiMessage instanceof CodebaseUpdateMessage) {
-						if (registry.isCodeMobilityEnabled()) {
-							CodebaseUpdateMessage codebaseUpdateMessage = (CodebaseUpdateMessage) rmiMessage;
-							inputStream.setRemoteCodebases(codebaseUpdateMessage.codebases);
-						}
-
-					} else if (rmiMessage instanceof InterruptionMessage) {
-						long invocationId = ((InterruptionMessage) rmiMessage).invocationId;
-						synchronized (activeInvocations) {
-							if (activeInvocations.containsKey(invocationId))
-								activeInvocations.get(invocationId).interrupt();
-						}
-					} else if (rmiMessage instanceof RefUseMessage) {
-						String objectId = ((RefUseMessage) rmiMessage).objectId;
-						Skeleton skeleton = registry.getSkeleton(objectId);
-						if (skeleton != null)
-							skeleton.updateLastUseTime();
-					} else {
-						throw new RuntimeException("INTERNAL ERROR: Unknown RMI message type");
-					}
-
+					rmiMessage.accept(this);
 				}
-			} catch (Exception e) { // something gone wrong, destroy this handler and dispose it
+			} catch (Exception e) { // something gone wrong, dispose this handler
 				if (Debug.RMI_HANDLER) {
 					System.out.println("[RMIHandler.receiver] receiver thrown the following exception:");
 					e.printStackTrace();
@@ -920,8 +771,180 @@ public final class RMIHandler {
 					return;
 
 				dispositionException = e;
-				dispose(true, true);
+				dispose(true);
 			}
+		}
+
+		@Override
+		public void handle(ReferenceUseMessage msg) throws Exception {
+			String objectId = msg.objectId;
+			Skeleton skeleton = registry.getSkeleton(objectId);
+			if (skeleton != null)
+				skeleton.updateLastUseTime();
+		}
+
+		@Override
+		public void handle(InterruptionMessage msg) throws Exception {
+			long invocationId = msg.invocationId;
+			synchronized (activeInvocations) {
+				if (activeInvocations.containsKey(invocationId))
+					activeInvocations.get(invocationId).interrupt();
+			}
+		}
+
+		@Override
+		public void handle(CodebaseUpdateMessage msg) throws Exception {
+			if (registry.isCodeDownloadingEnabled()) {
+				inputStream.setRemoteCodebases(msg.codebases);
+			}
+		}
+
+		@Override
+		public void handle(InvocationMessage msg) throws Exception {
+
+			// get the skeleton
+			Skeleton skeleton = registry.getSkeleton(msg.objectId);
+
+			if (skeleton == null) {
+				// object not found
+				ReturnMessage retHandle = new ReturnMessage();
+				retHandle.invocationId = msg.id;
+				retHandle.thrownException = new ObjectNotFoundException(msg.objectId);
+				putMessage(retHandle);
+				return;
+			}
+
+			// retrieve the object
+			Object object = skeleton.getObject();
+
+			// get the correct method
+			Method method;
+			try {
+				method = object.getClass().getMethod(msg.method, msg.parameterTypes);
+			} catch (Exception e) {
+				ReturnMessage retHandle = new ReturnMessage();
+				retHandle.invocationId = msg.id;
+				retHandle.thrownException = new RemoteException(e);
+				putMessage(retHandle);
+				return;
+			}
+
+			// get authorization
+			boolean authorized = sameRegistryAuthentication || registry.getAuthenticator() == null
+					|| registry.getAuthenticator().authorize(remoteAuthIdentifier, object, method);
+
+			// if authorized, starts the delegation thread
+			if (authorized) {
+				Thread delegated = new Thread(() -> {
+					ReturnMessage retMessage = new ReturnMessage();
+					retMessage.invocationId = msg.id;
+					try {
+
+						retMessage.returnValue = skeleton.invoke(msg.method, msg.parameterTypes, msg.parameters,
+								remoteRegistryKey, msg.id);
+
+						// set invocation return class
+						retMessage.returnClass = method.getReturnType();
+
+					} catch (InvocationTargetException e) {
+						// e.printStackTrace();
+						retMessage.thrownException = e.getCause();
+					} catch (NoSuchMethodException e) {
+						// e.printStackTrace();
+						retMessage.thrownException = new NoSuchMethodException(
+								"The method '" + msg.method + "(" + Arrays.toString(msg.parameterTypes)
+										+ ")' does not exists for the object with identifier '" + msg.objectId + "'.");
+					} catch (SecurityException e) {
+						// e.printStackTrace();
+						retMessage.thrownException = e;
+					} catch (IllegalAccessException e) {
+						// e.printStackTrace();
+					} catch (IllegalArgumentException e) {
+						// e.printStackTrace();
+						retMessage.thrownException = e;
+					} catch (NullPointerException e) {
+						// e.printStackTrace();
+						retMessage.thrownException = new NullPointerException("The object identifier '" + msg.objectId
+								+ "' of the stub is not bound to a remote object");
+					}
+
+					activeInvocations.remove(msg.id);
+
+					// send invocation response after method execution, if invocation is not
+					// asynchronous (the method is not annotated with @RMIAsynch)
+					if (!msg.asynch)
+						while (true)
+							try {
+								messageQueue.put(retMessage);
+								return;
+							} catch (InterruptedException e) {
+							}
+					else if (retMessage.thrownException != null) {
+						System.err.println("RMI asynchronous method '" + method
+								+ "' (annotated with @RMIAsynch) thrown the following exception.");
+						retMessage.thrownException.printStackTrace();
+					}
+
+				});
+				delegated.setName("RMIHandler.ReceiverThread.delegated");
+				activeInvocations.put(msg.id, delegated);
+				delegated.start();
+			} else {
+				// not authorized: send an authorization exception
+				ReturnMessage retHandle = new ReturnMessage();
+				retHandle.invocationId = msg.id;
+				retHandle.thrownException = new AuthorizationException();
+			}
+		}
+
+		@Override
+		public void handle(ReturnMessage msg) throws Exception {
+
+			// remove the waiting invocation
+			InvocationMessage invocation = invocations.remove(msg.invocationId);
+
+			if (invocation != null) {
+
+				// set return
+				invocation.returnClass = msg.returnClass;
+				invocation.returnValue = msg.returnValue;
+				invocation.thrownException = msg.thrownException;
+
+				// notify the invocation handler that is waiting on it
+				invocation.signalResult();
+			} else if (msg.thrownException != null && msg.thrownException instanceof Exception) {
+				throw (Exception) msg.thrownException;
+			}
+		}
+
+		@Override
+		public void handle(RemoteInterfaceMessage msg) throws Exception {
+			if (msg.interfaces == null) {
+				List<Class<?>> remotes = registry.getRemoteInterfaces(msg.objectId);
+				msg.interfaces = new Class<?>[remotes.size()];
+				msg.interfaces = remotes.toArray(msg.interfaces);
+				putMessage(msg);
+			} else {
+				RemoteInterfaceMessage req = interfaceRequests.get(msg.handleId);
+				req.interfaces = msg.interfaces;
+				req.signalResult();
+			}
+		}
+
+		@Override
+		public void handle(NewReferenceMessage msg) throws Exception {
+			if (msg.objectId != null) {
+				Skeleton sk = registry.getSkeleton(msg.objectId);
+				sk.addRef(RMIHandler.this);
+				references.add(sk.getId());
+			}
+		}
+
+		@Override
+		public void handle(FinalizeMessage msg) throws Exception {
+			Skeleton sk = registry.getSkeleton(msg.objectId);
+			if (sk != null)
+				sk.removeRef(RMIHandler.this);
 		}
 	}
 

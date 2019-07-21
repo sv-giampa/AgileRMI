@@ -20,66 +20,76 @@ import java.io.Closeable;
 import java.io.IOException;
 
 import agilermi.configuration.Remote;
+import agilermi.exception.RemoteException;
 
+/**
+ * Remote interface used to access a random access file remotely. The server
+ * should use the {@link RandomAccessServiceAdapter} or another proper
+ * implementation of this interface to provide access to a random access file or
+ * to a similar data storage.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 public interface RandomAccessService extends Closeable, Remote {
 
-	public byte[] readFully(int len) throws IOException;
+	public byte[] readFully(int len) throws IOException, RemoteException;
 
-	public int skipBytes(int n) throws IOException;
+	public int skipBytes(int n) throws IOException, RemoteException;
 
-	public boolean readBoolean() throws IOException;
+	public boolean readBoolean() throws IOException, RemoteException;
 
-	public byte readByte() throws IOException;
+	public byte readByte() throws IOException, RemoteException;
 
-	public int readUnsignedByte() throws IOException;
+	public int readUnsignedByte() throws IOException, RemoteException;
 
-	public short readShort() throws IOException;
+	public short readShort() throws IOException, RemoteException;
 
-	public int readUnsignedShort() throws IOException;
+	public int readUnsignedShort() throws IOException, RemoteException;
 
-	public char readChar() throws IOException;
+	public char readChar() throws IOException, RemoteException;
 
-	public int readInt() throws IOException;
+	public int readInt() throws IOException, RemoteException;
 
-	public long readLong() throws IOException;
+	public long readLong() throws IOException, RemoteException;
 
-	public float readFloat() throws IOException;
+	public float readFloat() throws IOException, RemoteException;
 
-	public double readDouble() throws IOException;
+	public double readDouble() throws IOException, RemoteException;
 
-	public String readLine() throws IOException;
+	public String readLine() throws IOException, RemoteException;
 
-	public String readUTF() throws IOException;
+	public String readUTF() throws IOException, RemoteException;
 
-	public void write(int b) throws IOException;
+	public void write(int b) throws IOException, RemoteException;
 
-	public void write(byte[] b) throws IOException;
+	public void write(byte[] b) throws IOException, RemoteException;
 
-	public void writeBoolean(boolean v) throws IOException;
+	public void writeBoolean(boolean v) throws IOException, RemoteException;
 
-	public void writeByte(int v) throws IOException;
+	public void writeByte(int v) throws IOException, RemoteException;
 
-	public void writeShort(int v) throws IOException;
+	public void writeShort(int v) throws IOException, RemoteException;
 
-	public void writeChar(int v) throws IOException;
+	public void writeChar(int v) throws IOException, RemoteException;
 
-	public void writeInt(int v) throws IOException;
+	public void writeInt(int v) throws IOException, RemoteException;
 
-	public void writeLong(long v) throws IOException;
+	public void writeLong(long v) throws IOException, RemoteException;
 
-	public void writeFloat(float v) throws IOException;
+	public void writeFloat(float v) throws IOException, RemoteException;
 
-	public void writeDouble(double v) throws IOException;
+	public void writeDouble(double v) throws IOException, RemoteException;
 
-	public void writeBytes(String s) throws IOException;
+	public void writeBytes(String s) throws IOException, RemoteException;
 
-	public void writeChars(String s) throws IOException;
+	public void writeChars(String s) throws IOException, RemoteException;
 
-	public void writeUTF(String s) throws IOException;
+	public void writeUTF(String s) throws IOException, RemoteException;
 
-	public void seek(long pos) throws IOException;
+	public void seek(long pos) throws IOException, RemoteException;
 
-	public long length() throws IOException;
+	public long length() throws IOException, RemoteException;
 
-	public void setLength(long newLength) throws IOException;
+	public void setLength(long newLength) throws IOException, RemoteException;
 }

@@ -1,3 +1,20 @@
+/**
+ *  Copyright 2018-2019 Salvatore Giampà
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *  
+ **/
+
 package agilermi.codemobility;
 
 import java.io.BufferedOutputStream;
@@ -13,7 +30,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
 import java.util.Date;
 
-import agilermi.configuration.Logger;
+import agilermi.configuration.SimpleLogger;
 
 /**
  * Implements a very basic and simple HTTP server that recognizes the GET method
@@ -23,13 +40,12 @@ import agilermi.configuration.Logger;
  * This very simple implementation recognizes only paths and it cannot handle
  * GET queries (such as 'url?param=value").
  * 
- * 
  * @author Salvatore Giampa'
  *
  */
 public final class BasicCodeServer {
 
-	private Logger logger;
+	private SimpleLogger simpleLogger;
 	private String codeDirectory = ".";
 	private Listener listener;
 
@@ -84,13 +100,13 @@ public final class BasicCodeServer {
 		return this;
 	}
 
-	public BasicCodeServer enableDebugLogs(Logger logger) {
-		this.logger = (logger == null) ? Logger.getDefault() : logger;
+	public BasicCodeServer enableDebugLogs(SimpleLogger simpleLogger) {
+		this.simpleLogger = (simpleLogger == null) ? new SimpleLogger(BasicCodeServer.class.getName()) : simpleLogger;
 		return this;
 	}
 
 	public BasicCodeServer diableDebugLogs() {
-		this.logger = null;
+		this.simpleLogger = null;
 		return this;
 	}
 
@@ -139,20 +155,20 @@ public final class BasicCodeServer {
 					return;
 				String path = request.split(" ", 4)[1];
 
-				if (logger != null) {
-					logger.log("|_HTTP request");
-					logger.log("|____request: ", request);
-					logger.log("|____client: %s:%d", socket.getInetAddress(), socket.getPort());
+				if (simpleLogger != null) {
+					simpleLogger.log("|_HTTP request");
+					simpleLogger.log("|____request: ", request);
+					simpleLogger.log("|____client: %s:%d", socket.getInetAddress(), socket.getPort());
 				}
 
-				// write response header
 				BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
 				try {
 					File file = Paths.get(codeDirectory, path).toFile();
 					if (!file.exists()) {
-						throw new InvalidPathException(file.getPath(), "File does not exists");
+						throw new InvalidPathException(file.getPath(), "File does not exist");
 					}
 
+					// write response header
 					output.write("HTTP/1.1 200 OK\n".getBytes());
 					output.write(("Date: " + new Date() + "\n").getBytes());
 					output.write(("Server: " + BasicCodeServer.class.getName() + "\n").getBytes());
@@ -181,8 +197,8 @@ public final class BasicCodeServer {
 					socket.close();
 
 				} catch (InvalidPathException e) {
-					if (logger != null)
-						logger.log("thrown exception: " + e);
+					if (simpleLogger != null)
+						simpleLogger.log("thrown exception: " + e);
 
 					output.write("HTTP/1.1 404 NOT_FOUND\n".getBytes());
 					output.write(("Date: " + new Date() + "\n").getBytes());

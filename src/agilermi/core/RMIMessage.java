@@ -27,6 +27,33 @@ import java.util.Set;
 import java.util.concurrent.Semaphore;
 
 /**
+ * Implemented by the transmitter and by the receiver in {@link RMIHandler}.
+ * This is used to control new RMI messages addition and RMI protocol
+ * extensions, allowing the developers of the framework to identify quickly the
+ * parts of code to implement to handle the new added RMI messages.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
+interface RMIMessageHandler {
+	void handle(ReferenceUseMessage msg) throws Exception;
+
+	void handle(InterruptionMessage msg) throws Exception;
+
+	void handle(CodebaseUpdateMessage msg) throws Exception;
+
+	void handle(InvocationMessage msg) throws Exception;
+
+	void handle(ReturnMessage msg) throws Exception;
+
+	void handle(RemoteInterfaceMessage msg) throws Exception;
+
+	void handle(NewReferenceMessage msg) throws Exception;
+
+	void handle(FinalizeMessage msg) throws Exception;
+}
+
+/**
  * Represents a generic message sent by a {@link RemoteInvocationHandler} to its
  * associated local {@link RMIHandler} and also it represents a message that can
  * be sent by a {@link RMIHandler} to another {@link RMIHandler} through the
@@ -36,14 +63,26 @@ import java.util.concurrent.Semaphore;
  *
  */
 interface RMIMessage extends Serializable {
+	/**
+	 * Must be implemented only as: handler.accept(this);
+	 * 
+	 * @param handler
+	 * @throws Exception
+	 */
+	void accept(RMIMessageHandler handler) throws Exception;
 }
 
-class RefUseMessage implements RMIMessage {
+class ReferenceUseMessage implements RMIMessage {
 	private static final long serialVersionUID = -6310823286118038927L;
 	public final String objectId;
 
-	public RefUseMessage(String objectId) {
+	public ReferenceUseMessage(String objectId) {
 		this.objectId = objectId;
+	}
+
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
 	}
 }
 
@@ -53,6 +92,11 @@ class InterruptionMessage implements RMIMessage {
 
 	public InterruptionMessage(long invocationId) {
 		this.invocationId = invocationId;
+	}
+
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
 	}
 }
 
@@ -83,6 +127,11 @@ class CodebaseUpdateMessage implements RMIMessage {
 			}
 			codebases.addAll(replaced);
 		}
+	}
+
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
 	}
 }
 
@@ -182,6 +231,11 @@ class InvocationMessage implements RMIMessage {
 		if (semaphore != null)
 			semaphore.release();
 	}
+
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
+	}
 }
 
 /**
@@ -208,6 +262,10 @@ class ReturnMessage implements RMIMessage {
 		this.thrownException = thrownException;
 	}
 
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
+	}
 }
 
 /**
@@ -260,6 +318,11 @@ class RemoteInterfaceMessage implements RMIMessage {
 			semaphore.release();
 	}
 
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
+	}
+
 }
 
 /**
@@ -276,6 +339,11 @@ class NewReferenceMessage implements RMIMessage {
 
 	public NewReferenceMessage(String objectId) {
 		this.objectId = objectId;
+	}
+
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
 	}
 
 }
@@ -295,6 +363,11 @@ class FinalizeMessage implements RMIMessage {
 
 	public FinalizeMessage(String objectId) {
 		this.objectId = objectId;
+	}
+
+	@Override
+	public void accept(RMIMessageHandler handler) throws Exception {
+		handler.handle(this);
 	}
 
 }

@@ -33,7 +33,7 @@ import javax.naming.OperationNotSupportedException;
  * replace remote objects on the local machine during serialization. On the
  * other side, these proxies are replaced during deserialization with new stubs
  * that reference the remote objects associated to the objectId in the
- * ReferenceInvocationHandler-s that have been replaced during
+ * {@link ReferenceInvocationHandler}-s that have been replaced during
  * serialization.<br>
  * <br>
  * In few words, this class allows to implement the deep remote referencing

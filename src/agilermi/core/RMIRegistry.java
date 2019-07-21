@@ -18,6 +18,7 @@
 package agilermi.core;
 
 import java.io.IOException;
+import java.lang.reflect.Proxy;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -85,6 +86,29 @@ public final class RMIRegistry {
 				}
 			});
 
+	private double faultSimulationProbability = 0;
+
+	private int skeletonInvocationCacheSize;
+
+	private boolean codeDownloadingEnabled;
+
+	private final boolean automaticReferencing;
+
+	// multiple connection mode
+	private boolean multiConnectionMode = false;
+
+	// enabling state of the state consistency after a connection fault
+	private boolean stateConsistencyOnFaultEnabled;
+
+	private int latencyTime;
+
+	private int leaseTime;
+
+	// port of the TCP listener
+	private int listenerPort;
+
+	private boolean finalized = false;
+
 	// identifies the current instance of RMIRegistry. It serves to avoid loop-back
 	// connections and to replace remote pointer that point to an object on this
 	// same registry with their local instance. It is used to repair broken
@@ -97,15 +121,8 @@ public final class RMIRegistry {
 	// codebases for code mobility
 	private RMIClassLoader rmiClassLoader;
 
-	private boolean codeMobilityEnabled;
-
 	// the server socket created by the last call to the enableListener() method
 	private ServerSocket serverSocket;
-
-	private final boolean automaticReferencing;
-
-	// port of the TCP listener
-	private int listenerPort;
 
 	// the peer that are currently online
 	private Map<InetSocketAddress, List<RMIHandler>> handlers = new HashMap<>();
@@ -134,22 +151,13 @@ public final class RMIRegistry {
 	// filter factory used to customize network communication streams
 	private ProtocolEndpointFactory protocolEndpointFactory;
 
-	// multiple connection mode
-	private boolean multiConnectionMode = false;
-
 	// map: "address:port" -> "authIdentifier:authPassphrase"
 	private Map<String, String[]> authenticationMap = new TreeMap<>();
-
-	private int latencyTime = 5000;
-
-	private int leaseTime = 10000;
 
 	private ClassLoaderFactory classLoaderFactory;
 
 	// rmiAuthenticator objects that authenticates and authorize users
 	private RMIAuthenticator rmiAuthenticator;
-
-	private boolean finalized = false;
 
 	// reference to the Distributed Garbage Collector thread
 	private Thread dgc;
@@ -175,11 +183,11 @@ public final class RMIRegistry {
 					for (Skeleton skeleton : skeletons) {
 						if (skeleton.names().size() > 0)
 							continue;
-						long lastUseTime = skeleton.getLastUseTime();
-						if (System.currentTimeMillis() - lastUseTime > leaseTime) {
+						long remainingTime = leaseTime - (System.currentTimeMillis() - skeleton.getLastUseTime());
+						if (remainingTime > 0) {
 							skeleton.unpublish();
 						} else {
-							waitTime = Math.min(leaseTime, lastUseTime);
+							waitTime = Math.min(waitTime, remainingTime);
 						}
 					}
 
@@ -222,21 +230,12 @@ public final class RMIRegistry {
 	 * by the {@link RMIRegistry#builder()} static method. A new instance of this
 	 * class wraps all the defaults for {@link RMIRegistry} and allows to modify
 	 * them. When the configuration has been terminated, a new {@link RMIRegistry}
-	 * instance can be obtained by the {@link Builder#build()} method.
-	 * 
-	 * defaults:<br>
-	 * <ul>
-	 * <li>connection listener enabled: false</li>
-	 * <li>connection listener daemon: true</li>
-	 * <li>{@link ServerSocketFactory}: null (that is
-	 * {@link ServerSocketFactory#getDefault()})</li>
-	 * <li>{@link SocketFactory}: null (that is
-	 * {@link SocketFactory#getDefault()})</li>
-	 * <li>{@link ProtocolEndpointFactory}: null</li>
-	 * <li>{@link RMIAuthenticator}: null</li>
-	 * <li>authentication Identifier: null (that is guest identifier)</li>
-	 * <li>authentication pass-phrase: null (that is guest pass-phrase)</li>
-	 * </ul>
+	 * instance can be obtained by the {@link Builder#build()} method.<br>
+	 * <br>
+	 * An instance of this class can be re-used after each call to the
+	 * {@link Builder#build()} method to generate new instances of
+	 * {@link RMIRegistry}. Each call to the {@link Builder#build()} method does not
+	 * reset the builder instance to its default state.
 	 * 
 	 * @author Salvatore Giampa'
 	 *
@@ -246,23 +245,86 @@ public final class RMIRegistry {
 		private Builder() {
 		}
 
+		// multi-connection mode (one connection for each stub)
+		boolean multiConnectionMode = false;
+
 		// underlyng protocols
 		private ServerSocketFactory serverSocketFactory = ServerSocketFactory.getDefault();
 		private SocketFactory socketFactory = SocketFactory.getDefault();
 		private ProtocolEndpointFactory protocolEndpointFactory;
 
-		// authentication
+		// authentication and authorization
 		private RMIAuthenticator rmiAuthenticator;
 
 		// code mobility
 		private Set<URL> codebases = new HashSet<>();
-		private boolean codeMobilityEnabled = false;
+		private boolean codeDownloadingEnabled = false;
 		private ClassLoaderFactory classLoaderFactory;
 
 		// Distributed Garbage Collector parameters
 		private int leaseTime = 600000;
-		private int latencyTime = 5000;
 		private boolean automaticReferencingEnabled = true;
+
+		// fault tolerance parameters
+		private int latencyTime = 10000;
+		private int skeletonInvocationCacheSize = 50;
+		private boolean stateConsistencyOnFaultEnabled = true;
+
+		/**
+		 * Enable or disable multi-connection mode. If it is enabled, tends to create
+		 * new connections for each created or received stub. <br>
+		 * <br>
+		 * When disabled it tends to share the same TCP connections across all local
+		 * stubs.<br>
+		 * <br>
+		 * Default: false
+		 * 
+		 * @param multiConnectionMode true to enable, false to disable
+		 * @return this builder
+		 */
+		public Builder setMultiConnectionMode(boolean multiConnectionMode) {
+			this.multiConnectionMode = multiConnectionMode;
+			return this;
+		}
+
+		/**
+		 * When enabled, this flag ensures that, after a connection fault, a stub will
+		 * be reconnected with the same remote object instance that existed before the
+		 * fault. If this is not possible, for instance, due to a crash of the remote
+		 * JVM process, the stub will be no longer reusable. <br>
+		 * <br>
+		 * If this is disabled and a new instance of the remote object is re-published,
+		 * the stub will be reconnected, but, given the state reached by the remote
+		 * object before the connection fault, there is no guarantee about that it will
+		 * be the same state after the connection repair.<br>
+		 * <br>
+		 * Default: false
+		 * 
+		 * @param stateConsistencyOnFaultEnabled true to enable status consistency
+		 *                                       guarantee on connection fault
+		 * @return this builder
+		 */
+		public Builder setStateConsistencyOnFaultEnabled(boolean enable) {
+			this.stateConsistencyOnFaultEnabled = enable;
+			return this;
+		}
+
+		/**
+		 * Sets the cache size of invocations results for each skeleton. The invocation
+		 * cache is used to prevent duplicate invocation requests due to connection
+		 * errors.<br>
+		 * <br>
+		 * Default: 50
+		 * 
+		 * @param skeletonInvocationCacheSize the max number of invocations return
+		 *                                    values to store in the cache of the
+		 *                                    skeleton
+		 * @return this builder
+		 */
+		public Builder setSkeletonInvocationCacheSize(int skeletonInvocationCacheSize) {
+			this.skeletonInvocationCacheSize = skeletonInvocationCacheSize;
+			return this;
+		}
 
 		/**
 		 * Enables or disables the automatic referencing which is the mechanism that
@@ -279,16 +341,16 @@ public final class RMIRegistry {
 		 * When the automatic referencing is not active, the framework can be used as a
 		 * plain old RPC middle-ware, where the Distributed Garbage Collection service
 		 * is off and no object can be remote without explicitly publishing it on the
-		 * RMI registry.<br>
+		 * RMI registry, that is a "service oriented" mode.<br>
 		 * <br>
 		 * 
-		 * Automatic referencing is enabled by default.
+		 * Default: true
 		 * 
 		 * @param enable set to true to enable automatic referencig, false otherwise.
 		 * @return this builder
 		 */
-		public Builder enableAutomaticReferencing(boolean enable) {
-			this.automaticReferencingEnabled = enable;
+		public Builder setAutomaticReferencingEnabled(boolean automaticReferencingEnabled) {
+			this.automaticReferencingEnabled = automaticReferencingEnabled;
 			return this;
 		}
 
@@ -297,7 +359,7 @@ public final class RMIRegistry {
 		 * mechanism will remove a non-named object from the registry.<br>
 		 * <br>
 		 * 
-		 * Default value: 600000 milliseconds (10 minutes).
+		 * Default: 600000 milliseconds (10 minutes).
 		 * 
 		 * @param leaseTime the lease timeout value in milliseconds
 		 * @return this builder
@@ -314,7 +376,7 @@ public final class RMIRegistry {
 		 * latency time passed).<br>
 		 * <br>
 		 * 
-		 * Default value: 5000 milliseconds.
+		 * Default: 5000 milliseconds.
 		 * 
 		 * @param latencyTime a time in milliseconds
 		 * @return this builder
@@ -337,10 +399,10 @@ public final class RMIRegistry {
 		}
 
 		/**
-		 * Utility method to add codebases at building time. Codebases can be added and
-		 * removed after the registry construction, too.
+		 * Utility method to add code-bases at building time. Code-bases can be added
+		 * and removed after the registry construction, too.
 		 * 
-		 * @param urls the urls of the codebases
+		 * @param urls the URLs of the code-bases
 		 * @return this builder
 		 */
 		public Builder addCodebases(Iterable<URL> urls) {
@@ -352,10 +414,10 @@ public final class RMIRegistry {
 		}
 
 		/**
-		 * Utility method to add codebases at building time. Codebases can be added and
-		 * removed after the registry construction, too.
+		 * Utility method to add code-bases at building time. Code-bases can be added
+		 * and removed after the registry construction, too.
 		 * 
-		 * @param urls the urls of the codebases
+		 * @param urls the URLs of the code-bases
 		 * @return this builder
 		 */
 		public Builder addCodebases(URL... urls) {
@@ -367,9 +429,21 @@ public final class RMIRegistry {
 		}
 
 		/**
+		 * Remove all the codebases added to this builder.
+		 * 
+		 * @return this builder
+		 */
+		public Builder clearCodebasesSet() {
+			codebases.clear();
+			return this;
+		}
+
+		/**
 		 * Sets the class loader factory used by this registry to decode remote classes
 		 * when code mobility is enabled. It is necessary on some platforms that uses a
-		 * different implementation of the Java Virtual Machine.
+		 * different implementation of the Java Virtual Machine. <br>
+		 * <br>
+		 * Default: null (uses an instance of {@link URLClassLoaderFactory})
 		 * 
 		 * @param classLoaderFactory the factory to use
 		 * @return this builder
@@ -380,21 +454,25 @@ public final class RMIRegistry {
 		}
 
 		/**
-		 * Enable code mobility. If code mobility is enabled, this registry will accept
-		 * and download remote code.
+		 * Enable dynamic code downloading. If code downloading is enabled, this
+		 * registry will accept and download code from remote code-bases. <br>
+		 * <br>
+		 * Default: false
 		 * 
-		 * @param codeMobilityEnabled true if code mobility must be enabled, false
-		 *                            otherwise
+		 * @param codeDownloadingEnabled true if the dynamic code downloading must be
+		 *                               enabled, false otherwise
 		 * @return this builder
 		 */
-		public Builder enableCodeMobility(boolean codeMobilityEnabled) {
-			this.codeMobilityEnabled = codeMobilityEnabled;
+		public Builder setCodeDownloadingEnabled(boolean enable) {
+			this.codeDownloadingEnabled = enable;
 			return this;
 		}
 
 		/**
 		 * Set an {@link RMIAuthenticator} object that intercept authentication and
 		 * authorization requests from remote machines.
+		 * 
+		 * Default: null (no {@link RMIAuthenticator})
 		 * 
 		 * @param rmiAuthenticator the {@link RMIAuthenticator} instance to use
 		 * @return this builder
@@ -406,7 +484,9 @@ public final class RMIRegistry {
 
 		/**
 		 * 
-		 * Sets the socket factories that the registry will use.
+		 * Sets the socket factories that the registry will use. <br>
+		 * <br>
+		 * Default: default socket socket factories provided by the JDK
 		 * 
 		 * @param socketFactory       the {@link SocketFactory} instance to use to build
 		 *                            client sockets
@@ -422,7 +502,9 @@ public final class RMIRegistry {
 
 		/**
 		 * Sets the {@link ProtocolEndpointFactory} instance to use in the registry to
-		 * build.
+		 * build. <br>
+		 * <br>
+		 * Default: null (no protocol customization)
 		 * 
 		 * @param protocolEndpointFactory the {@link ProtocolEndpointFactory} instance
 		 *                                that gives the {@link ProtocolEndpoint}
@@ -441,9 +523,10 @@ public final class RMIRegistry {
 		 * @return the built {@link RMIRegistry} instance
 		 */
 		public RMIRegistry build() {
-			RMIRegistry rMIRegistry = new RMIRegistry(serverSocketFactory, socketFactory, protocolEndpointFactory,
-					rmiAuthenticator, codeMobilityEnabled, codebases, classLoaderFactory, leaseTime, latencyTime,
-					automaticReferencingEnabled);
+			RMIRegistry rMIRegistry = new RMIRegistry(multiConnectionMode, serverSocketFactory, socketFactory,
+					protocolEndpointFactory, rmiAuthenticator, codeDownloadingEnabled, codebases, classLoaderFactory,
+					leaseTime, latencyTime, automaticReferencingEnabled, skeletonInvocationCacheSize,
+					stateConsistencyOnFaultEnabled);
 			return rMIRegistry;
 		}
 	}
@@ -460,7 +543,7 @@ public final class RMIRegistry {
 	 * @param protocolEndpointFactory the {@link ProtocolEndpointFactory} instance
 	 *                                that gives the streams in which the underlying
 	 *                                communication streams will be wrapped in
-	 * @param rmiAuthenticator        an {@link RMIAuthenticator} instance that
+	 * @param authenticator           an {@link RMIAuthenticator} instance that
 	 *                                allows to authenticate and authorize users of
 	 *                                incoming connection. For example, this
 	 *                                instance can be an adapter that access a
@@ -471,10 +554,11 @@ public final class RMIRegistry {
 	 * @see RMIRegistry.Builder
 	 * @see RMIRegistry#builder()
 	 */
-	private RMIRegistry(ServerSocketFactory serverSocketFactory, SocketFactory socketFactory,
-			ProtocolEndpointFactory protocolEndpointFactory, RMIAuthenticator rMIAuthenticator,
-			boolean codeMobilityEnabled, Set<URL> codebases, ClassLoaderFactory classLoaderFactory, int leaseTime,
-			int latencyTime, boolean automaticReferencingEnabled) {
+	private RMIRegistry(boolean multiconnectionMode, ServerSocketFactory serverSocketFactory,
+			SocketFactory socketFactory, ProtocolEndpointFactory protocolEndpointFactory,
+			RMIAuthenticator authenticator, boolean codeDownloadingEnabled, Set<URL> codebases,
+			ClassLoaderFactory classLoaderFactory, int leaseTime, int latencyTime, boolean automaticReferencingEnabled,
+			int skeletonInvocationCacheSize, boolean stateConsistencyOnFaultEnabled) {
 
 		Random random = new Random();
 		this.registryKey = Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong())
@@ -491,15 +575,18 @@ public final class RMIRegistry {
 		this.serverSocketFactory = serverSocketFactory;
 		this.socketFactory = socketFactory;
 		this.protocolEndpointFactory = protocolEndpointFactory;
-		this.rmiAuthenticator = rMIAuthenticator;
-		this.codeMobilityEnabled = codeMobilityEnabled;
+		this.rmiAuthenticator = authenticator;
+		this.codeDownloadingEnabled = codeDownloadingEnabled;
 		this.classLoaderFactory = classLoaderFactory;
 		this.rmiClassLoader = new RMIClassLoader(codebases, classLoaderFactory);
 		this.leaseTime = leaseTime;
 		this.latencyTime = latencyTime;
 		this.automaticReferencing = automaticReferencingEnabled;
+		this.skeletonInvocationCacheSize = skeletonInvocationCacheSize;
+		this.stateConsistencyOnFaultEnabled = stateConsistencyOnFaultEnabled;
+		this.multiConnectionMode = multiconnectionMode;
 
-		if (automaticReferencingEnabled) {
+		if (automaticReferencingEnabled && leaseTime > 0) {
 			// starts Distributed Garbage Collector service
 			this.dgc = new Thread(dgcTask);
 			this.dgc.setName("Distributed Garbage Collector service");
@@ -516,6 +603,79 @@ public final class RMIRegistry {
 	 */
 	public static Builder builder() {
 		return new Builder();
+	}
+
+	/**
+	 * Enable or disable multi-connection mode. If it is enabled, tends to create
+	 * new connections for each created or received stub. <br>
+	 * <br>
+	 * When disabled it tends to share the same TCP connections across all local
+	 * stubs.<br>
+	 * <br>
+	 * By default it is disabled.
+	 * 
+	 * @param multiConnectionMode true to enable, false to disable
+	 */
+	public void setMultiConnectionMode(boolean multiConnectionMode) {
+		this.multiConnectionMode = multiConnectionMode;
+	}
+
+	/**
+	 * Shows the multi-connection mode enable state. If it is enabled, tends to
+	 * create new connections for each created or received stub. By default it is
+	 * disabled.
+	 * 
+	 * @return true if multi-connection mode is enabled, false otherwise
+	 */
+	public boolean isMultiConnectionMode() {
+		return multiConnectionMode;
+	}
+
+	/**
+	 * Gets the size of invocations cache for each skeleton.<br>
+	 * See {@link Builder#setSkeletonInvocationCacheSize(int)} for more details.
+	 * 
+	 * @return the max number of invocation results that each skeleton stores in its
+	 *         cache
+	 */
+	public int getSkeletonInvocationCacheSize() {
+		return skeletonInvocationCacheSize;
+	}
+
+	/**
+	 * Gets the enabling status of the mechanism that guarantees the status
+	 * consistency between stubs and remote objects after a connection fault. See
+	 * {@link Builder#setStateConsistencyOnFaultEnabled(boolean)} for more details.
+	 * 
+	 * @return true if state consistency is guaranteed, false otherwise
+	 */
+	public boolean getStateConsistencyOnFaultEnabled() {
+		return stateConsistencyOnFaultEnabled;
+	}
+
+	/**
+	 * Enables the developer to simulate connection faults between machines,
+	 * specifying a fault probability. This is useful to test the application on
+	 * simulated unreliable connections.
+	 * 
+	 * @param probability a double between 0 and 1 that is the probability to have a
+	 *                    connection fault every time a message is sent to remote
+	 *                    {@link RMIHandler} instances. Set this to a value equal to
+	 *                    or smaller than 0 to disable fault simulation. The default
+	 *                    value is 0.
+	 */
+	public void setFaultSimulationProbability(double probability) {
+		this.faultSimulationProbability = Math.max(-0.0d, Math.min(probability, 1.0d));
+	}
+
+	/**
+	 * Gets the fault simulation probability. See
+	 * {@link #setFaultSimulationProbability(double)} for more details.
+	 * 
+	 * @return the last setted probability value
+	 */
+	public double getFaultSimulationProbability() {
+		return faultSimulationProbability;
 	}
 
 	/**
@@ -568,8 +728,16 @@ public final class RMIRegistry {
 		this.latencyTime = latencyTime;
 	}
 
-	public void setCodeMobilityEnabled(boolean codeMobilityEnabled) {
-		this.codeMobilityEnabled = codeMobilityEnabled;
+	public void setCodeDownloadingEnabled(boolean codeMobilityEnabled) {
+		this.codeDownloadingEnabled = codeMobilityEnabled;
+	}
+
+	/**
+	 * Equinvalent to calling {@link RMIClassLoader#clearCodebasesSet()} on the
+	 * result of the method {@link #getRmiClassLoader()}.
+	 */
+	public void clearCodebasesSet() {
+		getRmiClassLoader().clearCodebasesSet();
 	}
 
 	/**
@@ -579,7 +747,7 @@ public final class RMIRegistry {
 	 * @return all actually used codebases
 	 */
 	public Set<URL> getCodebases() {
-		return getRmiClassLoader().getCodebases();
+		return getRmiClassLoader().getCodebasesSet();
 	}
 
 	/**
@@ -638,8 +806,8 @@ public final class RMIRegistry {
 	 * @return true if this registry accepts code from remote codebases, false
 	 *         otherwise
 	 */
-	public boolean isCodeMobilityEnabled() {
-		return codeMobilityEnabled;
+	public boolean isCodeDownloadingEnabled() {
+		return codeDownloadingEnabled;
 	}
 
 	/**
@@ -708,27 +876,6 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Shows the multi-connection mode enable state. If it is enabled, tends to
-	 * create new connections for each created or received stub. By default it is
-	 * disabled.
-	 * 
-	 * @return true if multi-connection mode is enabled, false otherwise
-	 */
-	public boolean isMultiConnectionMode() {
-		return multiConnectionMode;
-	}
-
-	/**
-	 * Enable or disable multi-connection mode. If it is enabled, tends to create
-	 * new connections for each created or received stub. By default it is disabled.
-	 * 
-	 * @param multiConnectionMode true to enable, false to disable
-	 */
-	public void setMultiConnectionMode(boolean multiConnectionMode) {
-		this.multiConnectionMode = multiConnectionMode;
-	}
-
-	/**
 	 * Gets a {@link StubRetriever} instance linked to this registry
 	 * 
 	 * @return a {@link StubRetriever} object
@@ -791,11 +938,16 @@ public final class RMIRegistry {
 	 * @return the stub object
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
+	 * @throws InterruptedException
 	 */
 	public Object getStub(String address, int port, String objectId, boolean newConnection, Class<?>... stubInterfaces)
-			throws IOException {
+			throws IOException, InterruptedException {
 		synchronized (lock) {
-			return getRMIHandler(address, port, newConnection).getStub(objectId, stubInterfaces);
+			if (newConnection) {
+				return getRMIHandler(address, port, true).getStub(objectId);
+			}
+			return Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
+					new RemoteInvocationHandler(this, address, port, objectId));
 		}
 	}
 
@@ -846,8 +998,7 @@ public final class RMIRegistry {
 	public Object getStub(String address, int port, String objectId, boolean createNewHandler)
 			throws UnknownHostException, IOException, InterruptedException {
 
-		RMIHandler rmiHandler = getRMIHandler(address, port, createNewHandler);
-		return rmiHandler.getStub(objectId);
+		return getRMIHandler(address, port, createNewHandler).getStub(objectId);
 	}
 
 	/**
@@ -862,7 +1013,7 @@ public final class RMIRegistry {
 	 * @throws IOException          if I/O errors occur
 	 */
 	public RMIHandler getRMIHandler(String host, int port) throws IOException {
-		return getRMIHandler(host, port, false);
+		return getRMIHandler(host, port, multiConnectionMode);
 	}
 
 	/**
@@ -888,10 +1039,8 @@ public final class RMIRegistry {
 				if (rmiHandlers.size() == 0 || newConnection) {
 					rmiHandler = new RMIHandler(socketFactory.createSocket(host, port), RMIRegistry.this,
 							protocolEndpointFactory, true);
-
 					// bind handler to host
 					rmiHandlers.add(rmiHandler);
-
 					rmiHandler.start();
 				} else
 					rmiHandler = rmiHandlers.get(0);
@@ -1300,49 +1449,12 @@ public final class RMIRegistry {
 		return remoteIfs;
 	}
 
-	void fault(RMIHandler handler, boolean tryRepair, boolean signalFault) {
-		if (finalized)
-			return;
-
+	void removeRMIHandler(RMIHandler handler) {
 		synchronized (lock) {
 			List<RMIHandler> list = handlers.get(handler.getInetSocketAddress());
 			if (list != null)
 				list.remove(handler);
 		}
-
-		if (tryRepair) {
-			if (handler.isConnectionStarter()) {
-				RMIHandler newHandler = null;
-				String host = handler.getInetSocketAddress().getHostString();
-				int port = handler.getInetSocketAddress().getPort();
-				long timeout = handler.getDispositionTime() + latencyTime;
-				while (System.currentTimeMillis() < timeout)
-					try {
-						newHandler = getRMIHandler(host, port);
-					} catch (IOException e) {
-					}
-				if (newHandler != null) {
-
-					if (!newHandler.getRemoteRegistryKey().equals(handler.getRemoteRegistryKey())) {
-						// cannot repair connection because the remote registry key changed
-						// (e.g. because the remote process has been rebooted)
-						newHandler.dispose(false);
-						newHandler = null;
-					}
-
-					// signal new handler or null to all stubs connected to the fallen handler
-					for (RemoteInvocationHandler rih : handler.getConnectedStubs())
-						rih.replaceHandler(newHandler);
-
-					// replace old handler in this fault call
-					if (newHandler != null)
-						handler = newHandler;
-				}
-			}
-		}
-
-		if (signalFault && handler.isDisposed())
-			sendRMIHandlerFault(handler);
 	}
 
 	/**
@@ -1352,12 +1464,16 @@ public final class RMIRegistry {
 	 * @param handler   the object peer that caused the failure
 	 * @param exception the exception thrown by the object peer
 	 */
-	private void sendRMIHandlerFault(RMIHandler handler) {
-		Set<RMIFaultHandler> handlers;
+	void sendRMIHandlerFault(RMIHandler handler) {
+		if (finalized)
+			return;
+
+		Set<RMIFaultHandler> faultHandlers;
 		synchronized (lock) {
-			handlers = new HashSet<>(rmiFaultHandlers);
+			faultHandlers = new HashSet<>(rmiFaultHandlers);
 		}
-		handlers.forEach(o -> {
+
+		faultHandlers.forEach(o -> {
 			try {
 				o.onFault(handler, handler.getDispositionException());
 			} catch (Throwable e) {

@@ -71,7 +71,7 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 	 * @param obj
 	 * @return
 	 */
-	private boolean mustRemotize(Object obj) {
+	private boolean mustBeRemotized(Object obj) {
 		Class<?> objClass = obj.getClass();
 		if (objClass.isArray()) {
 			Class<?> type = objClass.getComponentType();
@@ -307,7 +307,7 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 				return newObj;
 		}
 
-		if (mustRemotize(obj))
+		if (mustBeRemotized(obj))
 			return remotize(obj);
 
 		return obj;
