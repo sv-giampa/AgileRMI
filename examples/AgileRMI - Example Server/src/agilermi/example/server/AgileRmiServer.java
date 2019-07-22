@@ -19,8 +19,6 @@ public class AgileRmiServer {
 		// remote objects publishing
 		rMIRegistry.publish("service", service);
 
-		rMIRegistry.enableRemoteException(false);
-
 		rMIRegistry.enableListener(3031, true);
 
 		while (true) {

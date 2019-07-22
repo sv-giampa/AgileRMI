@@ -231,10 +231,8 @@ public final class RMIHandler {
 	}
 
 	private void forceInvocationReturn(InvocationMessage invocation) {
-		if (registry.isRemoteExceptionEnabled()) {
-			invocation.success = false;
-			invocation.thrownException = new RemoteException();
-		}
+		invocation.success = false;
+		invocation.thrownException = new RemoteException(dispositionException);
 		invocation.signalResult();
 	}
 
@@ -701,9 +699,8 @@ public final class RMIHandler {
 
 		@Override
 		public void handle(RemoteInterfaceMessage msg) throws Exception {
-			if (msg.interfaces == null) {
+			if (msg.interfaces == null)
 				interfaceRequests.put(msg.handleId, msg);
-			}
 			outputStream.writeUnshared(msg);
 			outputStream.flush();
 		}

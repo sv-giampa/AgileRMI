@@ -45,8 +45,8 @@ public final class ConitnuousGzipOutputStream extends OutputStream {
 	 * size is the max number of data bytes that can be buffered before the next
 	 * block compression.
 	 * 
-	 * @param output
-	 * @param bufferSize
+	 * @param output     the underlying output stream
+	 * @param bufferSize the size of the compression window
 	 */
 	public ConitnuousGzipOutputStream(OutputStream output, int bufferSize) {
 		this.output = new DataOutputStream(output);

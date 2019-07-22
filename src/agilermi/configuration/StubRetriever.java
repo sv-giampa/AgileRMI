@@ -29,7 +29,7 @@ import agilermi.core.RMIRegistry;
  * {@link RMIRegistry#getStubRetriever()} method. Instances of this interface
  * are usually connected to a {@link RMIRegistry} instance that they use to
  * retrieve stubs. Instances of this interface can be sent over RMI and they are
- * always replaced with the instances connected to the local {@link RMIRegistry}
+ * always replaced with the instance connected to the local {@link RMIRegistry}
  * on the receiver machine.
  * 
  * @author Salvatore Giampa'

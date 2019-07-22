@@ -17,10 +17,18 @@
 
 package agilermi.configuration;
 
+import java.lang.reflect.UndeclaredThrowableException;
+
+import agilermi.annotation.RMISuppressFaults;
+import agilermi.exception.RemoteException;
+
 /**
  * Marker interface for remote interfaces. This interface is used to explicitly
  * and statically mark the application interfaces whose instances must be all
- * remote objects.
+ * remote objects. Each remote method should throw {@link RemoteException} or it
+ * should be annotated with {@link RMISuppressFaults}. If not, the remote method
+ * can throw {@link UndeclaredThrowableException} whose cause can be
+ * {@link RemoteException}.
  * 
  * @author Salvatore Giampa'
  *

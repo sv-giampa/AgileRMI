@@ -31,8 +31,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-import agilermi.configuration.SimpleLogger;
 import agilermi.configuration.Unreferenced;
+import agilermi.utility.logging.RMILogger;
 
 /**
  * Represents a local remote object exposed by a local {@link RMIRegistry}
@@ -56,7 +56,7 @@ final class Skeleton {
 	private Set<String> names = new TreeSet<>();
 	private long lastUseTime;
 
-	private SimpleLogger logger = new SimpleLogger(Skeleton.class);
+	private RMILogger logger = RMILogger.get(Skeleton.class);
 
 	private int cacheSize;
 
@@ -171,8 +171,8 @@ final class Skeleton {
 			}, rmiRegistry.getLatencyTime(), TimeUnit.MILLISECONDS);
 
 			if (Debug.SKELETONS)
-				logger.log("removal scheduled at %d ms\t(Object=%s; Class=%s)", rmiRegistry.getLatencyTime(),
-						object, object.getClass().getName());
+				logger.log("removal scheduled at %d ms\t(Object=%s; Class=%s)", rmiRegistry.getLatencyTime(), object,
+						object.getClass().getName());
 		}
 	}
 

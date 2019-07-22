@@ -33,8 +33,10 @@ import java.util.List;
 import java.util.Map;
 
 import agilermi.annotation.RMIAsynch;
-import agilermi.annotation.RMICachedResult;
+import agilermi.annotation.RMICached;
+import agilermi.annotation.RMISuppressFaults;
 import agilermi.exception.LocalAuthenticationException;
+import agilermi.exception.RemoteException;
 
 /**
  * Defines the invocation handler for the object stubs
@@ -205,7 +207,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 		boolean isAsynch = method.isAnnotationPresent(RMIAsynch.class) && method.getReturnType() == void.class;
-		boolean isCached = method.isAnnotationPresent(RMICachedResult.class) && method.getParameterTypes().length == 0;
+		boolean isCached = method.isAnnotationPresent(RMICached.class) && method.getParameterTypes().length == 0;
+		boolean noEffectOnError = method.isAnnotationPresent(RMISuppressFaults.class);
 
 		if (isCached) {
 			if (cache.containsKey(method)) {
@@ -301,7 +304,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			if (methodName.equals("toString") && parameterTypes.length == 0)
 				return "[broken remote reference " + objectId + "@" + host + ":" + port + "]";
 		} else if (isCached) {
-			RMICachedResult cached = method.getAnnotation(RMICachedResult.class);
+			RMICached cached = method.getAnnotation(RMICached.class);
 			RMICache rmiCache;
 			if (cache.containsKey(method)) {
 				rmiCache = cache.get(method);
@@ -316,8 +319,10 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		if (invocation.thrownException != null) {
-			virtualiseStackTrace(invocation.thrownException);
-			throw invocation.thrownException;
+			if (!(invocation.thrownException instanceof RemoteException && noEffectOnError)) {
+				virtualiseStackTrace(invocation.thrownException);
+				throw invocation.thrownException;
+			}
 		} else if (hashCodeCall) {
 			// cache hashCode for next non-deliverable invocations
 			hashCode = (Integer) invocation.returnValue;

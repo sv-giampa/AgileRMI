@@ -23,10 +23,22 @@ import java.util.LinkedList;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 
+/**
+ * A factory for {@link StackProtocolEndpoint}
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 public class StackProtocolEndpointFactory implements ProtocolEndpointFactory {
 
 	private LinkedList<ProtocolEndpointFactory> factories = new LinkedList<>();
 
+	/**
+	 * Add a protocol to the stack
+	 * 
+	 * @param protocolEndpointFactory the {@link ProtocolEndpointFactory} of the
+	 *                                protocol
+	 */
 	public void addProtocolEndpointFactory(ProtocolEndpointFactory protocolEndpointFactory) {
 		factories.add(protocolEndpointFactory);
 	}

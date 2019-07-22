@@ -55,7 +55,6 @@ import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.RMIFaultHandler;
 import agilermi.configuration.Remote;
 import agilermi.configuration.StubRetriever;
-import agilermi.exception.RemoteException;
 
 /**
  * Defines a class that accepts new TCP connections over a port of the local
@@ -304,8 +303,8 @@ public final class RMIRegistry {
 		 *                                       guarantee on connection fault
 		 * @return this builder
 		 */
-		public Builder setStateConsistencyOnFaultEnabled(boolean enable) {
-			this.stateConsistencyOnFaultEnabled = enable;
+		public Builder setStateConsistencyOnFaultEnabled(boolean stateConsistencyOnFaultEnabled) {
+			this.stateConsistencyOnFaultEnabled = stateConsistencyOnFaultEnabled;
 			return this;
 		}
 
@@ -331,7 +330,7 @@ public final class RMIRegistry {
 		 * replace all the remote objects with its stubs when they are transmitted over
 		 * RMI streams.<br>
 		 * <br>
-		 * When automatic referencing is active, if a remote object that was not
+		 * When automatic referencing is active and a remote object that was not
 		 * published on the registry is transmitted as a parameter for a remote
 		 * invocation or as a return value, it is automatically published on the
 		 * registry. This mechanism requires that a Distributed Garbage Collector
@@ -341,12 +340,13 @@ public final class RMIRegistry {
 		 * When the automatic referencing is not active, the framework can be used as a
 		 * plain old RPC middle-ware, where the Distributed Garbage Collection service
 		 * is off and no object can be remote without explicitly publishing it on the
-		 * RMI registry, that is a "service oriented" mode.<br>
+		 * RMI registry, so that this is a "service oriented" mode.<br>
 		 * <br>
 		 * 
 		 * Default: true
 		 * 
-		 * @param enable set to true to enable automatic referencig, false otherwise.
+		 * @param automaticReferencingEnabled set to true to enable automatic
+		 *                                    referencig, false otherwise.
 		 * @return this builder
 		 */
 		public Builder setAutomaticReferencingEnabled(boolean automaticReferencingEnabled) {
@@ -463,8 +463,8 @@ public final class RMIRegistry {
 		 *                               enabled, false otherwise
 		 * @return this builder
 		 */
-		public Builder setCodeDownloadingEnabled(boolean enable) {
-			this.codeDownloadingEnabled = enable;
+		public Builder setCodeDownloadingEnabled(boolean codeDownloadingEnabled) {
+			this.codeDownloadingEnabled = codeDownloadingEnabled;
 			return this;
 		}
 
@@ -477,8 +477,8 @@ public final class RMIRegistry {
 		 * @param rmiAuthenticator the {@link RMIAuthenticator} instance to use
 		 * @return this builder
 		 */
-		public Builder setAuthenticator(RMIAuthenticator rMIAuthenticator) {
-			this.rmiAuthenticator = rMIAuthenticator;
+		public Builder setAuthenticator(RMIAuthenticator rmiAuthenticator) {
+			this.rmiAuthenticator = rmiAuthenticator;
 			return this;
 		}
 
@@ -486,7 +486,7 @@ public final class RMIRegistry {
 		 * 
 		 * Sets the socket factories that the registry will use. <br>
 		 * <br>
-		 * Default: default socket socket factories provided by the JDK
+		 * Default: default socket factories provided by the JDK
 		 * 
 		 * @param socketFactory       the {@link SocketFactory} instance to use to build
 		 *                            client sockets
@@ -518,16 +518,15 @@ public final class RMIRegistry {
 		}
 
 		/**
-		 * Builds the RMIRegistry. After this call, the builder will not reset.
+		 * Builds the {@link RMIRegistry} instance. After this call, the builder will
+		 * not reset and it will be reusable to build new {@link RMIRegistry} instances.
 		 * 
 		 * @return the built {@link RMIRegistry} instance
 		 */
 		public RMIRegistry build() {
-			RMIRegistry rMIRegistry = new RMIRegistry(multiConnectionMode, serverSocketFactory, socketFactory,
-					protocolEndpointFactory, rmiAuthenticator, codeDownloadingEnabled, codebases, classLoaderFactory,
-					leaseTime, latencyTime, automaticReferencingEnabled, skeletonInvocationCacheSize,
-					stateConsistencyOnFaultEnabled);
-			return rMIRegistry;
+			return new RMIRegistry(multiConnectionMode, serverSocketFactory, socketFactory, protocolEndpointFactory,
+					rmiAuthenticator, codeDownloadingEnabled, codebases, classLoaderFactory, leaseTime, latencyTime,
+					automaticReferencingEnabled, skeletonInvocationCacheSize, stateConsistencyOnFaultEnabled);
 		}
 	}
 
@@ -682,7 +681,8 @@ public final class RMIRegistry {
 	 * 
 	 * Returns the status of the utomatic referencing. <br>
 	 * <br>
-	 * See {@link Builder#enableAutomaticReferencing(boolean)} for more information.
+	 * See {@link Builder#setAutomaticReferencingEnabled(boolean)} for more
+	 * information.
 	 * 
 	 * @return true if automatic referencing is enabled, false otherwise
 	 */
@@ -716,8 +716,8 @@ public final class RMIRegistry {
 	 * 
 	 * @param leaseTime the lease timeout value in milliseconds
 	 */
-	public void setLeaseTime(int dgcLeaseValue) {
-		this.leaseTime = dgcLeaseValue;
+	public void setLeaseTime(int leaseTime) {
+		this.leaseTime = leaseTime;
 	}
 
 	public int getLatencyTime() {
@@ -938,7 +938,8 @@ public final class RMIRegistry {
 	 * @return the stub object
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
-	 * @throws InterruptedException
+	 * @throws InterruptedException if the current thread is interrupted during the
+	 *                              operation
 	 */
 	public Object getStub(String address, int port, String objectId, boolean newConnection, Class<?>... stubInterfaces)
 			throws IOException, InterruptedException {
@@ -1158,29 +1159,6 @@ public final class RMIRegistry {
 	 */
 	public RMIAuthenticator getAuthenticator() {
 		return rmiAuthenticator;
-	}
-
-	/**
-	 * Enables the stubs for remote objects to throw a {@link RemoteException} when
-	 * their {@link RMIHandler} will be disposed
-	 * 
-	 * @param enable set this to true to enable the exception, set to false
-	 *               otherwise
-	 */
-	public void enableRemoteException(boolean enable) {
-		this.remoteExceptionEnabled = enable;
-	}
-
-	/**
-	 * Gets the enable status of the {@link RemoteException}. If the
-	 * {@link RemoteException} is disabled, the stubs connected to a failed handler
-	 * will return from their invocation the default value for the return type (e.g.
-	 * null for objects, false for boolean, 0 for primitive numeric types, etc.)
-	 * 
-	 * @return true if {@link RemoteException} is enabled, false otherwise
-	 */
-	public boolean isRemoteExceptionEnabled() {
-		return remoteExceptionEnabled;
 	}
 
 	/**

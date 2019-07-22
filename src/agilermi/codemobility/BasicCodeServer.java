@@ -30,7 +30,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
 import java.util.Date;
 
-import agilermi.configuration.SimpleLogger;
+import agilermi.utility.logging.RMILogger;
 
 /**
  * Implements a very basic and simple HTTP server that recognizes the GET method
@@ -45,12 +45,14 @@ import agilermi.configuration.SimpleLogger;
  */
 public final class BasicCodeServer {
 
-	private SimpleLogger simpleLogger;
+	private RMILogger logger;
 	private String codeDirectory = ".";
 	private Listener listener;
 
 	/**
 	 * Creates a new server instance
+	 * 
+	 * @return a new {@link BasicCodeServer} instance
 	 */
 	public static BasicCodeServer create() {
 		return new BasicCodeServer();
@@ -100,13 +102,13 @@ public final class BasicCodeServer {
 		return this;
 	}
 
-	public BasicCodeServer enableDebugLogs(SimpleLogger simpleLogger) {
-		this.simpleLogger = (simpleLogger == null) ? new SimpleLogger(BasicCodeServer.class.getName()) : simpleLogger;
+	public BasicCodeServer enableDebugLogs(RMILogger logger) {
+		this.logger = (logger == null) ? RMILogger.get(BasicCodeServer.class) : logger;
 		return this;
 	}
 
 	public BasicCodeServer diableDebugLogs() {
-		this.simpleLogger = null;
+		this.logger = null;
 		return this;
 	}
 
@@ -155,10 +157,10 @@ public final class BasicCodeServer {
 					return;
 				String path = request.split(" ", 4)[1];
 
-				if (simpleLogger != null) {
-					simpleLogger.log("|_HTTP request");
-					simpleLogger.log("|____request: ", request);
-					simpleLogger.log("|____client: %s:%d", socket.getInetAddress(), socket.getPort());
+				if (logger != null) {
+					logger.log("|_HTTP request");
+					logger.log("|____request: ", request);
+					logger.log("|____client: %s:%d", socket.getInetAddress(), socket.getPort());
 				}
 
 				BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
@@ -197,8 +199,8 @@ public final class BasicCodeServer {
 					socket.close();
 
 				} catch (InvalidPathException e) {
-					if (simpleLogger != null)
-						simpleLogger.log("thrown exception: " + e);
+					if (logger != null)
+						logger.log("thrown exception: " + e);
 
 					output.write("HTTP/1.1 404 NOT_FOUND\n".getBytes());
 					output.write(("Date: " + new Date() + "\n").getBytes());

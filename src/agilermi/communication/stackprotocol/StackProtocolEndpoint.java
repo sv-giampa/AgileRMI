@@ -23,12 +23,26 @@ import java.util.LinkedList;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 
+/**
+ * Represents an endpoint that is a stack of protocols
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 public class StackProtocolEndpoint implements ProtocolEndpoint {
 	private LinkedList<ProtocolEndpoint> endpoints = new LinkedList<>();
 
 	private OutputStream output;
 	private InputStream input;
 
+	/**
+	 * Creates a protocol stack
+	 * 
+	 * @param factories    list of {@link ProtocolEndpointFactory protocol
+	 *                     factories}
+	 * @param outputStream the underlying {@link OutputStream}
+	 * @param inputStream  the underlying {@link InputStream}
+	 */
 	public StackProtocolEndpoint(LinkedList<ProtocolEndpointFactory> factories, OutputStream outputStream,
 			InputStream inputStream) {
 		ProtocolEndpoint endpoint = null;

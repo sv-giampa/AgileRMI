@@ -93,7 +93,7 @@ public final class DefaultSSLSocketFactory extends SSLSocketFactory {
 		sslSocket.setUseClientMode(true);
 		sslSocket.setEnabledProtocols(sslSocket.getSupportedProtocols());
 		sslSocket.setEnabledCipherSuites(sslSocket.getSupportedCipherSuites());
-		sslSocket.setSoTimeout(10000);
+		// sslSocket.setSoTimeout(10000);
 		sslSocket.startHandshake();
 		sslSocket.setSoTimeout(0);
 	}
