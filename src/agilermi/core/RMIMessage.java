@@ -169,7 +169,6 @@ class InvocationMessage implements RMIMessage {
 	public transient Object returnValue;
 	public transient Class<?> returnClass;
 	public transient Throwable thrownException;
-	public transient boolean success;
 
 	/**
 	 * Builds an invocation handle with the given invocation identifier

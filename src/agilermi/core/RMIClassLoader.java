@@ -17,6 +17,7 @@
 package agilermi.core;
 
 import java.net.URL;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -85,8 +86,32 @@ public final class RMIClassLoader extends ClassLoader {
 	 * @param url the url of the codebase to remove
 	 */
 	public void removeCodebase(URL url) {
-		staticCodebases.remove(url);
-		modificationNumber++;
+		removeCodebases(url);
+	}
+
+	/**
+	 * Remove a codebase that is statically loaded in this RMI environment (A
+	 * codebase that contains the code of the local application). This method cannot
+	 * remove remotely loaded codebases.
+	 * 
+	 * @param url the url of the codebase to remove
+	 */
+	public void removeCodebases(Collection<URL> url) {
+		removeCodebases(url.toArray(new URL[0]));
+	}
+
+	/**
+	 * Remove a codebase that is statically loaded in this RMI environment (A
+	 * codebase that contains the code of the local application). This method cannot
+	 * remove remotely loaded codebases.
+	 * 
+	 * @param url the url of the codebase to remove
+	 */
+	public void removeCodebases(URL... urls) {
+		for (URL url : urls)
+			staticCodebases.remove(url);
+		modificationNumber += urls.length;
+		System.gc();
 	}
 
 	/**

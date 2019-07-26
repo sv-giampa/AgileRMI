@@ -130,7 +130,12 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 							e.toString());
 			}
 		}
-		return super.resolveClass(desc);
+		try {
+			return super.resolveClass(desc);
+		} catch (ClassNotFoundException e) {
+			throw new ClassNotFoundException(
+					"No codebase can be used to load the class. Check the codebase settings on the registry.");
+		}
 	}
 
 	private void replaceFields(Object obj) throws IOException {

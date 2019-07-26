@@ -231,7 +231,6 @@ public final class RMIHandler {
 	}
 
 	private void forceInvocationReturn(InvocationMessage invocation) {
-		invocation.success = false;
 		invocation.thrownException = new RemoteException(dispositionException);
 		invocation.signalResult();
 	}
@@ -665,7 +664,6 @@ public final class RMIHandler {
 			try {
 				outputStream.writeUnshared(msg);
 				outputStream.flush();
-				msg.success = true;
 				if (!msg.asynch)
 					invocations.put(msg.id, msg);
 				else {
@@ -923,7 +921,7 @@ public final class RMIHandler {
 
 				// notify the invocation handler that is waiting on it
 				invocation.signalResult();
-			} else if (msg.thrownException != null && msg.thrownException instanceof Exception) {
+			} else if (msg.thrownException != null) {
 				throw (Exception) msg.thrownException;
 			}
 		}

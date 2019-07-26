@@ -106,7 +106,7 @@ public final class RMIRegistry {
 	// port of the TCP listener
 	private int listenerPort;
 
-	private boolean finalized = false;
+	private volatile boolean finalized = false;
 
 	// identifies the current instance of RMIRegistry. It serves to avoid loop-back
 	// connections and to replace remote pointer that point to an object on this
@@ -159,16 +159,19 @@ public final class RMIRegistry {
 	private RMIAuthenticator rmiAuthenticator;
 
 	// reference to the Distributed Garbage Collector thread
-	private Thread dgc;
+	private DGC dgc;
 
 	// the reference to the main thread
-	private Thread listener;
+	private TCPListener listener;
 
-	private LocalGarbageCollectionThread localGCInvoker = new LocalGarbageCollectionThread();
+	private LocalGCInvoker localGCInvoker = new LocalGCInvoker();
 
-	private class LocalGarbageCollectionThread extends Thread {
-		public LocalGarbageCollectionThread() {
-			setName(LocalGarbageCollectionThread.class.getName());
+	/**
+	 * Local Garbage Collector invoker service
+	 */
+	private class LocalGCInvoker extends Thread {
+		public LocalGCInvoker() {
+			setName(LocalGCInvoker.class.getName());
 			setDaemon(true);
 			start();
 		}
@@ -177,8 +180,8 @@ public final class RMIRegistry {
 		public void run() {
 			try {
 				while (!isInterrupted()) {
+					Thread.sleep(latencyTime);
 					System.gc();
-					Thread.sleep(5000);
 				}
 			} catch (InterruptedException e) {
 			}
@@ -186,9 +189,15 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Distributed Garbage Collection service task
+	 * Distributed Garbage Collection service
 	 */
-	private Runnable dgcTask = new Runnable() {
+	private class DGC extends Thread {
+		public DGC() {
+			setName(this.getClass().getName());
+			setDaemon(true);
+			start();
+		}
+
 		@Override
 		public void run() {
 			try {
@@ -215,19 +224,23 @@ public final class RMIRegistry {
 					Thread.sleep(waitTime);
 				}
 			} catch (InterruptedException e) {
-				e.printStackTrace();
 			}
 		}
-	};
+	}
 
 	/**
-	 * Defines the task that accepts new incoming connections and creates
+	 * Defines the thread that accepts new incoming connections and creates
 	 * {@link RMIHandler} objects
 	 */
-	private Runnable listenerTask = new Runnable() {
+	private class TCPListener extends Thread {
+		public TCPListener(boolean daemon) {
+			setName(this.getClass().getName());
+			setDaemon(daemon);
+			start();
+		}
+
 		@Override
 		public void run() {
-			Thread.currentThread().setName("RMIRegistry.listenerTask");
 			while (listener != null && !listener.isInterrupted())
 				try {
 					Socket socket = serverSocket.accept();
@@ -239,8 +252,8 @@ public final class RMIRegistry {
 				} catch (IOException e) {
 					// e.printStackTrace();
 				}
-		};
-	};
+		}
+	}
 
 	/**
 	 * Builder for {@link RMIRegistry}. A new instance of this class can be returned
@@ -609,10 +622,7 @@ public final class RMIRegistry {
 
 		if (automaticReferencingEnabled && leaseTime > 0) {
 			// starts Distributed Garbage Collector service
-			this.dgc = new Thread(dgcTask);
-			this.dgc.setName("Distributed Garbage Collector service");
-			this.dgc.setDaemon(true);
-			this.dgc.start();
+			this.dgc = new DGC();
 		}
 	}
 
@@ -864,6 +874,8 @@ public final class RMIRegistry {
 	 * @param authPassphrase the authentication pass-phrase
 	 */
 	public void setAuthentication(String host, int port, String authId, String authPassphrase) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		try {
 			InetAddress address = InetAddress.getByName(host);
 			host = address.getCanonicalHostName();
@@ -907,12 +919,20 @@ public final class RMIRegistry {
 	 *                               fault handlers}
 	 */
 	public void finalize(boolean signalHandlersFailures) {
+		if (finalized)
+			return;
 		synchronized (lock) {
-			disableListener();
 			finalized = true;
+			disableListener();
 			for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext(); it.remove())
 				for (RMIHandler rMIHandler : handlers.get(it.next()))
 					rMIHandler.dispose(signalHandlersFailures);
+
+			if (dgc != null)
+				dgc.interrupt();
+			if (localGCInvoker != null)
+				localGCInvoker.interrupt();
+			System.gc();
 		}
 	}
 
@@ -952,6 +972,8 @@ public final class RMIRegistry {
 	 * @return the stub object
 	 */
 	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		return Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
 				new RemoteInvocationHandler(this, address, port, objectId));
 	}
@@ -961,7 +983,7 @@ public final class RMIRegistry {
 	 * on a remote machine. This method performs a request to the remote machine to
 	 * get the remote interfaces of the remote object, then it creates the stub. All
 	 * the remote interfaces of the remote object must be visible by the default
-	 * class loader and they must be known by the local runtime.
+	 * class loader and they must be known by each local runtime.
 	 * 
 	 * @param address  the host address
 	 * @param port     the host port
@@ -977,6 +999,8 @@ public final class RMIRegistry {
 	 */
 	public Object getStub(String address, int port, String objectId)
 			throws UnknownHostException, IOException, InterruptedException {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		return getRMIHandler(address, port, multiConnectionMode).getStub(objectId);
 	}
 
@@ -1012,6 +1036,8 @@ public final class RMIRegistry {
 	 * @throws IOException          if I/O errors occurs
 	 */
 	public RMIHandler getRMIHandler(String host, int port, boolean newConnection) throws IOException {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		Callable<RMIHandler> callable = () -> {
 			synchronized (lock) {
 				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
@@ -1041,7 +1067,19 @@ public final class RMIRegistry {
 		}
 	}
 
+	/**
+	 * Close all currently active connections to the specified remote socket
+	 * (host/port).<br>
+	 * The stubs referring to the objects on the specified socket can create new
+	 * connections if they are used.
+	 * 
+	 * @param host the string address of the remote host
+	 * @param port the port of the remote socket
+	 * @throws IOException
+	 */
 	public void closeAllConnections(String host, int port) throws IOException {
+		if (finalized)
+			return;
 		Callable<Void> callable = () -> {
 			synchronized (lock) {
 				InetSocketAddress inetAddress = new InetSocketAddress(host, port);
@@ -1077,15 +1115,15 @@ public final class RMIRegistry {
 	 * @throws IOException if I/O errors occur
 	 */
 	public void enableListener(int port, boolean daemon) throws IOException {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		Callable<Void> callable = () -> {
 			synchronized (lock) {
 				if (listener != null)
 					disableListener();
 				serverSocket = serverSocketFactory.createServerSocket(port);
 				this.listenerPort = serverSocket.getLocalPort();
-				listener = new Thread(listenerTask);
-				listener.setDaemon(daemon);
-				listener.start();
+				listener = new TCPListener(daemon);
 			}
 			return null;
 		};
@@ -1154,6 +1192,8 @@ public final class RMIRegistry {
 	 *                                  that is /\#[0-9]+/
 	 */
 	public void publish(String name, Object object) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		if (name.startsWith(Skeleton.IDENTIFIER_PREFIX))
 			throw new IllegalArgumentException("The name prefix '" + Skeleton.IDENTIFIER_PREFIX
 					+ "' is reserved to atomatic referencing. Please use another name pattern.");
@@ -1191,6 +1231,8 @@ public final class RMIRegistry {
 	 * @return the generated identifier
 	 */
 	public String publish(Object object) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		synchronized (lock) {
 			if (skeletonByObject.containsKey(object)) {
 				Skeleton sk = skeletonByObject.get(object);
@@ -1213,6 +1255,8 @@ public final class RMIRegistry {
 	 * @param object the object to unpublish
 	 */
 	public void unpublish(Object object) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		synchronized (lock) {
 			Skeleton skeleton = skeletonByObject.remove(object);
 			if (skeleton != null) {
@@ -1229,6 +1273,8 @@ public final class RMIRegistry {
 	 * @param o the fault handler
 	 */
 	public void attachFaultHandler(RMIFaultHandler o) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		synchronized (lock) {
 			rmiFaultHandlers.add(o);
 		}
@@ -1240,6 +1286,8 @@ public final class RMIRegistry {
 	 * @param o the fault handler
 	 */
 	public void detachFailureHandler(RMIFaultHandler o) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		synchronized (lock) {
 			rmiFaultHandlers.remove(o);
 		}
@@ -1252,6 +1300,8 @@ public final class RMIRegistry {
 	 * @return the remotized object
 	 */
 	public Object getRemoteObject(String objectId) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		synchronized (lock) {
 			Skeleton skeleton = getSkeletonByIdMap().get(objectId);
 			if (skeleton != null)
@@ -1268,6 +1318,8 @@ public final class RMIRegistry {
 	 * @return the associated identifier or null if no entry was found
 	 */
 	public String getRemoteObjectId(Object object) {
+		if (finalized)
+			throw new IllegalStateException("this registry has been finalized");
 		synchronized (lock) {
 			Skeleton skeleton = skeletonByObject.get(object);
 			if (skeleton != null)
@@ -1402,6 +1454,12 @@ public final class RMIRegistry {
 		return remoteIfs;
 	}
 
+	/**
+	 * Package-scoped. Removes a {@link RMIHandler handler} from this registry. This
+	 * method should be used by {@link RMIHandler} itself, only.
+	 * 
+	 * @param handler the {@link RMIHandler handler to remove}
+	 */
 	void removeRMIHandler(RMIHandler handler) {
 		synchronized (lock) {
 			List<RMIHandler> list = handlers.get(handler.getInetSocketAddress());
@@ -1430,7 +1488,7 @@ public final class RMIRegistry {
 			try {
 				o.onFault(handler, handler.getDispositionException());
 			} catch (Throwable e) {
-				e.printStackTrace();
+				// e.printStackTrace();
 			}
 		});
 	}
@@ -1494,7 +1552,7 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Package-level method to get authentication relative to a remote process.
+	 * Package-scoped. Gets authentication relative to a remote process.
 	 * 
 	 * @param address the remote address
 	 * @param port    the remote port
@@ -1510,14 +1568,18 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * @return the skeletonById
+	 * Package-scoped. Gets the map (name/id => skeleton)
+	 * 
+	 * @return the skeletonById map
 	 */
 	Map<String, Skeleton> getSkeletonByIdMap() {
 		return skeletonById;
 	}
 
 	/**
-	 * @return the skeletonByObject
+	 * Package-scoped. Gets the map (object => skeleton)
+	 * 
+	 * @return the skeletonByObject map
 	 */
 	Map<Object, Skeleton> getSkeletonByObjectMap() {
 		return skeletonByObject;

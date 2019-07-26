@@ -208,7 +208,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 		boolean isAsynch = method.isAnnotationPresent(RMIAsynch.class) && method.getReturnType() == void.class;
 		boolean isCached = method.isAnnotationPresent(RMICached.class) && method.getParameterTypes().length == 0;
-		boolean noEffectOnError = method.isAnnotationPresent(RMISuppressFaults.class);
+		boolean suppressFaults = method.isAnnotationPresent(RMISuppressFaults.class);
 
 		if (isCached) {
 			if (cache.containsKey(method)) {
@@ -256,45 +256,47 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			}
 		}
 
-		boolean finishInvocation = false;
-		do {
-			invoke(invocation);
+		invoke(invocation);
 
-			if (invocation.success) {
-				if (Debug.INVOCATION_HANDLERS)
-					System.out.println(RemoteInvocationHandler.class.getName() + " invocation success!");
-				finishInvocation = true;
-			} else {
-				if (Debug.INVOCATION_HANDLERS)
-					System.out.println(RemoteInvocationHandler.class.getName() + " invocation error!");
-
-				long timeout;
-				if (handler == null)
-					timeout = System.currentTimeMillis() + rmiRegistry.getLatencyTime();
-				else
-					timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
-
-				do {
-					try {
-						getRMIHandler();
-						if (Debug.INVOCATION_HANDLERS)
-							System.out.println(RemoteInvocationHandler.class.getName() + " handler repaired!");
-					} catch (Exception e) {
-						invocation.thrownException = e;
-						if (Debug.INVOCATION_HANDLERS)
-							System.out.println(RemoteInvocationHandler.class.getName() + " handler repair error!");
-					}
-
-					if (Debug.INVOCATION_HANDLERS) {
-						System.out.println(
-								RemoteInvocationHandler.class.getName() + " handler==null? " + (handler == null));
-						System.out.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
-								+ handler.isDisposed());
-					}
-				} while ((finishInvocation = handler == null || handler.isDisposed())
-						&& System.currentTimeMillis() < timeout);
-			}
-		} while (!finishInvocation);
+//		boolean finishInvocation = false;
+//		do {
+//			invoke(invocation);
+//			
+//			if (invocation.success) {
+//				if (Debug.INVOCATION_HANDLERS)
+//					System.out.println(RemoteInvocationHandler.class.getName() + " invocation success!");
+//				finishInvocation = true;
+//			} else {
+//				if (Debug.INVOCATION_HANDLERS)
+//					System.out.println(RemoteInvocationHandler.class.getName() + " invocation error!");
+//
+//				long timeout;
+//				if (handler == null)
+//					timeout = System.currentTimeMillis() + rmiRegistry.getLatencyTime();
+//				else
+//					timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
+//
+//				do {
+//					try {
+//						getRMIHandler();
+//						if (Debug.INVOCATION_HANDLERS)
+//							System.out.println(RemoteInvocationHandler.class.getName() + " handler repaired!");
+//					} catch (Exception e) {
+//						invocation.thrownException = e;
+//						if (Debug.INVOCATION_HANDLERS)
+//							System.out.println(RemoteInvocationHandler.class.getName() + " handler repair error!");
+//					}
+//
+//					if (Debug.INVOCATION_HANDLERS) {
+//						System.out.println(
+//								RemoteInvocationHandler.class.getName() + " handler==null? " + (handler == null));
+//						System.out.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
+//								+ handler.isDisposed());
+//					}
+//				} while ((finishInvocation = handler == null || handler.isDisposed())
+//						&& System.currentTimeMillis() < timeout);
+//			}
+//		} while (!finishInvocation);
 
 		if (invocation.returnValue == null) {
 			if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class)
@@ -319,7 +321,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		if (invocation.thrownException != null) {
-			if (!(invocation.thrownException instanceof RemoteException && noEffectOnError)) {
+			if (!(invocation.thrownException instanceof RemoteException && suppressFaults)) {
 				virtualiseStackTrace(invocation.thrownException);
 				throw invocation.thrownException;
 			}
