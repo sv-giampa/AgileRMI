@@ -13,8 +13,8 @@
     <selectedElements exportClassFiles="false" exportJavaFiles="true" exportOutputFolder="true">
         <javaElement handleIdentifier="=AgileRMI - Library/src"/>
         <file path="/AgileRMI - Library/README.md"/>
-        <file path="/AgileRMI - Library/LICENSE"/>
         <file path="/AgileRMI - Library/NOTICE.txt"/>
+        <file path="/AgileRMI - Library/LICENSE"/>
         <folder path="/AgileRMI - Library/docs"/>
     </selectedElements>
 </jardesc>

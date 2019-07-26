@@ -1,7 +1,7 @@
 package agilermi.example.service;
 
-import agilermi.annotation.RMIAsynch;
 import agilermi.configuration.Remote;
+import agilermi.configuration.annotation.RMIAsynch;
 import agilermi.exception.RemoteException;
 
 public interface Service extends Remote {

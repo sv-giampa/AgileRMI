@@ -30,16 +30,17 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import agilermi.configuration.Unreferenced;
 import agilermi.utility.logging.RMILogger;
 
 /**
- * Represents a local remote object exposed by a local {@link RMIRegistry}
+ * Represents a local remote remoteObject exposed by a local {@link RMIRegistry}
  * instance on the network. An instance of this class is a proxy for a remote
- * object. Instances of this class count the remote references to a remote
- * object and act the distributed garbage collection mechanism. This is the main
- * component used to act the distributed garbage collection.
+ * remoteObject. Instances of this class count the remote references to a remote
+ * remoteObject and act the distributed garbage collection mechanism. This is
+ * the main component used to act the distributed garbage collection.
  * 
  * @author Salvatore Giampa'
  *
@@ -51,7 +52,7 @@ final class Skeleton {
 	private RMIRegistry rmiRegistry;
 	private int refGlobalCounter = 0;
 	private Map<RMIHandler, Integer> refCounters = new HashMap<>();
-	private Object object;
+	private Object remoteObject;
 	private String id;
 	private Set<String> names = new TreeSet<>();
 	private long lastUseTime;
@@ -60,6 +61,9 @@ final class Skeleton {
 
 	private int cacheSize;
 
+	private AtomicInteger activeInvocations = new AtomicInteger();
+
+	// invocations results cache. Used to avoid duplicate invocation execution
 	private Map<SimpleEntry<String, Long>, Object> invocationsCache = Collections
 			.synchronizedMap(new LinkedHashMap<SimpleEntry<String, Long>, Object>(cacheSize, 0.75f, true) {
 				private static final long serialVersionUID = -6061814438769261316L;
@@ -72,7 +76,7 @@ final class Skeleton {
 
 	Skeleton(Object object, RMIRegistry rmiRegistry) {
 		id = IDENTIFIER_PREFIX + (nextId++);
-		this.object = object;
+		this.remoteObject = object;
 		this.rmiRegistry = rmiRegistry;
 		this.cacheSize = rmiRegistry.getSkeletonInvocationCacheSize();
 		updateLastUseTime();
@@ -90,9 +94,8 @@ final class Skeleton {
 		count = count - 1;
 		refCounters.put(rMIHandler, count);
 		refGlobalCounter--;
-		if (Debug.SKELETONS)
-			logger.log("removed remote reference shared with '%s'\t(Object=%s; Class=%s)",
-					rMIHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+		logger.logIf(Debug.SKELETONS, "removed remote reference shared with '%s'\t(Object=%s; Class=%s)",
+				rMIHandler.getInetSocketAddress().toString(), remoteObject, remoteObject.getClass().getName());
 		scheduleRemoval();
 	}
 
@@ -106,7 +109,7 @@ final class Skeleton {
 				} catch (InterruptedException e) {
 				} catch (ExecutionException e) {
 				}
-				rmiRegistry.getSkeletonByObjectMap().put(object, this);
+				rmiRegistry.getSkeletonByObjectMap().put(remoteObject, this);
 				rmiRegistry.getSkeletonByIdMap().put(id, this);
 			}
 		}
@@ -119,34 +122,32 @@ final class Skeleton {
 			refCounters.put(rMIHandler, count);
 		}
 		refGlobalCounter++;
-		if (Debug.SKELETONS)
-			logger.log("added remote reference shared with '%s'\t(Object=%s; Class=%s)",
-					rMIHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+		logger.logIf(Debug.SKELETONS, "added remote reference shared with '%s'\t(Object=%s; Class=%s)",
+				rMIHandler.getInetSocketAddress().toString(), remoteObject, remoteObject.getClass().getName());
 	}
 
 	synchronized void removeAllRefs(RMIHandler rMIHandler) {
 		Integer count = refCounters.remove(rMIHandler);
 		refGlobalCounter -= count;
-		if (Debug.SKELETONS)
-			logger.log("removed all remote references shared with '%s'\t(Object=%s; Class=%s)",
-					rMIHandler.getInetSocketAddress().toString(), object, object.getClass().getName());
+		logger.logIf(Debug.SKELETONS, "removed all remote references shared with '%s'\t(Object=%s; Class=%s)",
+				rMIHandler.getInetSocketAddress().toString(), remoteObject, remoteObject.getClass().getName());
 		scheduleRemoval();
 	}
 
 	public void unpublish() {
-		if (object instanceof Unreferenced)
-			((Unreferenced) object).unreferenced();
+		if (remoteObject instanceof Unreferenced)
+			((Unreferenced) remoteObject).unreferenced();
 
-		if (Debug.SKELETONS)
-			logger.log("removed from registry\t(Object=%s; Class=%s)", object, object.getClass().getName());
-		rmiRegistry.unpublish(object);
+		logger.logIf(Debug.SKELETONS, "removed from registry\t(Object=%s; Class=%s)", remoteObject,
+				remoteObject.getClass().getName());
+		rmiRegistry.unpublish(remoteObject);
 	}
 
 	private Future<?> scheduledRemoval;
 
 	private synchronized void scheduleRemoval() {
-		if (Debug.SKELETONS)
-			logger.log("trying to schedule removal\t(Object=%s; Class=%s)", object, object.getClass().getName());
+		logger.logIf(Debug.SKELETONS, "trying to schedule removal\t(Object=%s; Class=%s)", remoteObject,
+				remoteObject.getClass().getName());
 		if (refGlobalCounter == 0 && names.isEmpty()) {
 			if (scheduledRemoval != null) {
 				if (scheduledRemoval.cancel(false)) {
@@ -156,8 +157,8 @@ final class Skeleton {
 						return;
 				}
 			}
-			if (Debug.SKELETONS)
-				logger.log("scheduling removal\t(Object=%s; Class=%s)", object, object.getClass().getName());
+			logger.logIf(Debug.SKELETONS, "scheduling removal\t(Object=%s; Class=%s)", remoteObject,
+					remoteObject.getClass().getName());
 
 			// schedule the skeleton remove operation to be executed afte 10 seconds, to
 			// avoid errors caused by network latecies (e.g. when a machine pass a remote
@@ -170,9 +171,8 @@ final class Skeleton {
 				}
 			}, rmiRegistry.getLatencyTime(), TimeUnit.MILLISECONDS);
 
-			if (Debug.SKELETONS)
-				logger.log("removal scheduled at %d ms\t(Object=%s; Class=%s)", rmiRegistry.getLatencyTime(), object,
-						object.getClass().getName());
+			logger.logIf(Debug.SKELETONS, "removal scheduled at %d ms\t(Object=%s; Class=%s)",
+					rmiRegistry.getLatencyTime(), remoteObject, remoteObject.getClass().getName());
 		}
 	}
 
@@ -188,12 +188,17 @@ final class Skeleton {
 		return Collections.unmodifiableSet(names);
 	}
 
-	Object getObject() {
-		return object;
+	Object getRemoteObject() {
+		return remoteObject;
 	}
 
 	String getId() {
 		return id;
+	}
+
+	public boolean isGarbage() {
+		return names.isEmpty() && (System.currentTimeMillis() - lastUseTime > rmiRegistry.getLeaseTime())
+				&& activeInvocations.get() <= 0;
 	}
 
 	public long getLastUseTime() {
@@ -218,7 +223,7 @@ final class Skeleton {
 			}
 		}
 
-		Method met = object.getClass().getMethod(method, parameterTypes);
+		Method met = remoteObject.getClass().getMethod(method, parameterTypes);
 
 		if (Modifier.isPrivate(met.getModifiers()))
 			throw new IllegalAccessException("This method is private. It must not be accessed over RMI.");
@@ -228,11 +233,21 @@ final class Skeleton {
 		// set the method accessible (it becomes accessible from the library)
 		boolean accessible = met.isAccessible();
 		met.setAccessible(true);
+
+		// prevents the garbage collection of this object during invocations
+		activeInvocations.incrementAndGet();
 		try {
-			Object result = met.invoke(object, parameters);
+			Object result = met.invoke(remoteObject, parameters);
 			invocationsCache.put(cacheKey, result);
 			return result;
 		} finally {
+			// update last use
+			updateLastUseTime();
+
+			// decrement the active invocations counter
+			activeInvocations.decrementAndGet();
+
+			// restore accessibility state of the method
 			met.setAccessible(accessible);
 		}
 	}
@@ -241,7 +256,7 @@ final class Skeleton {
 	public int hashCode() {
 		final int prime = 31;
 		int result = 1;
-		result = prime * result + ((object == null) ? 0 : object.hashCode());
+		result = prime * result + ((remoteObject == null) ? 0 : remoteObject.hashCode());
 		return result;
 	}
 
@@ -254,10 +269,10 @@ final class Skeleton {
 
 		if (obj instanceof Skeleton) {
 			Skeleton other = (Skeleton) obj;
-			if (object == null) {
-				if (other.object != null)
+			if (remoteObject == null) {
+				if (other.remoteObject != null)
 					return false;
-			} else if (!object.equals(other.object))
+			} else if (!remoteObject.equals(other.remoteObject))
 				return false;
 			return true;
 		}

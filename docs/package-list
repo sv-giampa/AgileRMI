@@ -1,14 +1,13 @@
 agilermi
-agilermi.annotation
 agilermi.authentication
 agilermi.codemobility
 agilermi.communication
 agilermi.communication.gzip
 agilermi.communication.stackprotocol
 agilermi.configuration
+agilermi.configuration.annotation
 agilermi.core
 agilermi.exception
 agilermi.utility
-agilermi.utility.bytestream
-agilermi.utility.file
+agilermi.utility.io
 agilermi.utility.logging

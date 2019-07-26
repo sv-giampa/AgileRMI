@@ -528,7 +528,6 @@ public final class RMIHandler {
 	 *                              operation
 	 */
 	public Object getStub(String objectId) throws UnknownHostException, IOException, InterruptedException {
-
 		RemoteInterfaceMessage msg = new RemoteInterfaceMessage(objectId);
 		putMessage(msg);
 		if (!disposed)
@@ -812,7 +811,7 @@ public final class RMIHandler {
 			}
 
 			// retrieve the object
-			Object object = skeleton.getObject();
+			Object object = skeleton.getRemoteObject();
 
 			// get the correct method
 			Method method;
@@ -830,67 +829,82 @@ public final class RMIHandler {
 			boolean authorized = sameRegistryAuthentication || registry.getAuthenticator() == null
 					|| registry.getAuthenticator().authorize(remoteAuthIdentifier, object, method);
 
-			// if authorized, starts the delegation thread
+			// if authorized, starts the invocation thread
 			if (authorized) {
-				Thread delegated = new Thread(() -> {
-					ReturnMessage retMessage = new ReturnMessage();
-					retMessage.invocationId = msg.id;
-					try {
-
-						retMessage.returnValue = skeleton.invoke(msg.method, msg.parameterTypes, msg.parameters,
-								remoteRegistryKey, msg.id);
-
-						// set invocation return class
-						retMessage.returnClass = method.getReturnType();
-
-					} catch (InvocationTargetException e) {
-						// e.printStackTrace();
-						retMessage.thrownException = e.getCause();
-					} catch (NoSuchMethodException e) {
-						// e.printStackTrace();
-						retMessage.thrownException = new NoSuchMethodException(
-								"The method '" + msg.method + "(" + Arrays.toString(msg.parameterTypes)
-										+ ")' does not exists for the object with identifier '" + msg.objectId + "'.");
-					} catch (SecurityException e) {
-						// e.printStackTrace();
-						retMessage.thrownException = e;
-					} catch (IllegalAccessException e) {
-						// e.printStackTrace();
-					} catch (IllegalArgumentException e) {
-						// e.printStackTrace();
-						retMessage.thrownException = e;
-					} catch (NullPointerException e) {
-						// e.printStackTrace();
-						retMessage.thrownException = new NullPointerException("The object identifier '" + msg.objectId
-								+ "' of the stub is not bound to a remote object");
-					}
-
-					activeInvocations.remove(msg.id);
-
-					// send invocation response after method execution, if invocation is not
-					// asynchronous (the method is not annotated with @RMIAsynch)
-					if (!msg.asynch)
-						while (true)
-							try {
-								messageQueue.put(retMessage);
-								return;
-							} catch (InterruptedException e) {
-							}
-					else if (retMessage.thrownException != null) {
-						System.err.println("RMI asynchronous method '" + method
-								+ "' (annotated with @RMIAsynch) thrown the following exception.");
-						retMessage.thrownException.printStackTrace();
-					}
-
-				});
-				delegated.setName("RMIHandler.ReceiverThread.delegated");
-				activeInvocations.put(msg.id, delegated);
-				delegated.start();
+				new InvocationThread(msg, skeleton, method);
 			} else {
 				// not authorized: send an authorization exception
 				ReturnMessage retHandle = new ReturnMessage();
 				retHandle.invocationId = msg.id;
 				retHandle.thrownException = new AuthorizationException();
+			}
+		}
+
+		private class InvocationThread extends Thread {
+			InvocationMessage msg;
+			Skeleton skeleton;
+			Method method;
+
+			public InvocationThread(InvocationMessage msg, Skeleton skeleton, Method method) {
+				this.msg = msg;
+				this.skeleton = skeleton;
+				this.method = method;
+
+				activeInvocations.put(msg.id, this);
+				setName(this.getClass().getName());
+				setDaemon(true);
+				start();
+			}
+
+			@Override
+			public void run() {
+				ReturnMessage retMessage = new ReturnMessage();
+				retMessage.invocationId = msg.id;
+				try {
+
+					retMessage.returnValue = skeleton.invoke(msg.method, msg.parameterTypes, msg.parameters,
+							remoteRegistryKey, msg.id);
+
+					// set invocation return class
+					retMessage.returnClass = method.getReturnType();
+
+				} catch (InvocationTargetException e) {
+					// e.printStackTrace();
+					retMessage.thrownException = e.getCause();
+				} catch (NoSuchMethodException e) {
+					// e.printStackTrace();
+					retMessage.thrownException = new NoSuchMethodException(
+							"The method '" + msg.method + "(" + Arrays.toString(msg.parameterTypes)
+									+ ")' does not exists for the object with identifier '" + msg.objectId + "'.");
+				} catch (SecurityException e) {
+					// e.printStackTrace();
+					retMessage.thrownException = e;
+				} catch (IllegalAccessException e) {
+					// e.printStackTrace();
+				} catch (IllegalArgumentException e) {
+					// e.printStackTrace();
+					retMessage.thrownException = e;
+				} catch (NullPointerException e) {
+					// e.printStackTrace();
+					retMessage.thrownException = e;
+				}
+
+				activeInvocations.remove(msg.id);
+
+				// send invocation response after method execution, if invocation is not
+				// asynchronous (the method is not annotated with @RMIAsynch)
+				if (!msg.asynch)
+					while (true)
+						try {
+							messageQueue.put(retMessage);
+							return;
+						} catch (InterruptedException e) {
+						}
+				else if (retMessage.thrownException != null) {
+					System.err.println("RMI asynchronous method '" + method
+							+ "' (annotated with @RMIAsynch) thrown the following exception.");
+					retMessage.thrownException.printStackTrace();
+				}
 			}
 		}
 

@@ -19,7 +19,7 @@ package agilermi.configuration;
 
 import java.lang.reflect.UndeclaredThrowableException;
 
-import agilermi.annotation.RMISuppressFaults;
+import agilermi.configuration.annotation.RMISuppressFaults;
 import agilermi.exception.RemoteException;
 
 /**

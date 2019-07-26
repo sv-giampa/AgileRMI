@@ -164,6 +164,27 @@ public final class RMIRegistry {
 	// the reference to the main thread
 	private Thread listener;
 
+	private LocalGarbageCollectionThread localGCInvoker = new LocalGarbageCollectionThread();
+
+	private class LocalGarbageCollectionThread extends Thread {
+		public LocalGarbageCollectionThread() {
+			setName(LocalGarbageCollectionThread.class.getName());
+			setDaemon(true);
+			start();
+		}
+
+		@Override
+		public void run() {
+			try {
+				while (!isInterrupted()) {
+					System.gc();
+					Thread.sleep(5000);
+				}
+			} catch (InterruptedException e) {
+			}
+		}
+	}
+
 	/**
 	 * Distributed Garbage Collection service task
 	 */
@@ -180,13 +201,10 @@ public final class RMIRegistry {
 					}
 
 					for (Skeleton skeleton : skeletons) {
-						if (skeleton.names().size() > 0)
-							continue;
-						long remainingTime = leaseTime - (System.currentTimeMillis() - skeleton.getLastUseTime());
-						if (remainingTime > 0) {
+						if (skeleton.isGarbage()) {
 							skeleton.unpublish();
 						} else {
-							waitTime = Math.min(waitTime, remainingTime);
+							waitTime = Math.min(waitTime, System.currentTimeMillis() - skeleton.getLastUseTime());
 						}
 					}
 
@@ -371,8 +389,8 @@ public final class RMIRegistry {
 
 		/**
 		 * Sets an estimate of the TCP connection latency time. This constant is used to
-		 * determine updates across the RMI network (e.g. when a remote object has zero
-		 * pointers its removal from registry is scheduled to be executed after the
+		 * determine update times across the RMI network (e.g. when a remote object has
+		 * zero pointers its removal from registry is scheduled to be executed after the
 		 * latency time passed).<br>
 		 * <br>
 		 * 
@@ -392,6 +410,7 @@ public final class RMIRegistry {
 		 * 
 		 * @param url the url to the codebase
 		 * @return this builder
+		 * @see #addCodebase(URL)
 		 */
 		public Builder addCodebase(URL url) {
 			codebases.add(url);
@@ -404,6 +423,7 @@ public final class RMIRegistry {
 		 * 
 		 * @param urls the URLs of the code-bases
 		 * @return this builder
+		 * @see #addCodebase(URL)
 		 */
 		public Builder addCodebases(Iterable<URL> urls) {
 			if (urls == null)
@@ -419,6 +439,7 @@ public final class RMIRegistry {
 		 * 
 		 * @param urls the URLs of the code-bases
 		 * @return this builder
+		 * @see #addCodebase(URL)
 		 */
 		public Builder addCodebases(URL... urls) {
 			if (urls == null)
@@ -432,6 +453,7 @@ public final class RMIRegistry {
 		 * Remove all the codebases added to this builder.
 		 * 
 		 * @return this builder
+		 * @see #addCodebase(URL)
 		 */
 		public Builder clearCodebasesSet() {
 			codebases.clear();
@@ -605,11 +627,12 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Enable or disable multi-connection mode. If it is enabled, tends to create
-	 * new connections for each created or received stub. <br>
+	 * Enable or disable multi-connection mode.<br>
 	 * <br>
-	 * When disabled it tends to share the same TCP connections across all local
-	 * stubs.<br>
+	 * If it is enabled, the RMI environment tends to create new connections for
+	 * each created or received stub.<br>
+	 * When disabled the RMI environment tends to share the same connections across
+	 * all local stubs.<br>
 	 * <br>
 	 * By default it is disabled.
 	 * 
@@ -620,10 +643,9 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Shows the multi-connection mode enable state. If it is enabled, tends to
-	 * create new connections for each created or received stub. By default it is
-	 * disabled.
+	 * Shows the multi-connection mode enable state.
 	 * 
+	 * @see #setMultiConnectionMode(boolean)
 	 * @return true if multi-connection mode is enabled, false otherwise
 	 */
 	public boolean isMultiConnectionMode() {
@@ -711,19 +733,29 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Sets the lease timeout after that the distributed garbage collection
-	 * mechanism will remove a non-named object from the registry.
+	 * Gets the estimate of the TCP connection latency time given by the developer.
+	 * This constant is used to determine update times across the RMI network (e.g.
+	 * when a remote object has zero pointers its removal from registry is scheduled
+	 * to be executed after the latency time passed).<br>
+	 * <br>
 	 * 
-	 * @param leaseTime the lease timeout value in milliseconds
+	 * @see Builder#setLatencyTime(int)
+	 * @return the latency time in milliseconds
 	 */
-	public void setLeaseTime(int leaseTime) {
-		this.leaseTime = leaseTime;
-	}
-
 	public int getLatencyTime() {
 		return latencyTime;
 	}
 
+	/**
+	 * Sets an estimate of the TCP connection latency time. This constant is used to
+	 * determine update times across the RMI network (e.g. when a remote object has
+	 * zero pointers its removal from registry is scheduled to be executed after the
+	 * latency time passed).<br>
+	 * <br>
+	 * 
+	 * @see Builder#setLatencyTime(int)
+	 * @param latencyTime a time in milliseconds
+	 */
 	public void setLatencyTime(int latencyTime) {
 		this.latencyTime = latencyTime;
 	}
@@ -753,6 +785,7 @@ public final class RMIRegistry {
 	/**
 	 * Add new static codebases that will be sent to the other machines.
 	 * 
+	 * @see #addCodebase(URL)
 	 * @param urls the codebases to add
 	 */
 	public void addCodebases(Iterable<URL> urls) {
@@ -765,6 +798,7 @@ public final class RMIRegistry {
 	/**
 	 * Add new static codebases that will be sent to the other machines.
 	 * 
+	 * @see #addCodebase(URL)
 	 * @param urls the codebases to add
 	 */
 	public void addCodebases(URL... urls) {
@@ -775,7 +809,12 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Add a new static codebase that will be sent to the other machines.
+	 * Add a new static codebase that will be sent to the other machines.<br>
+	 * <br>
+	 * A static codebase is constantly active and it is supposed its classes are
+	 * always used and available in the current RMI node. It is always propagated to
+	 * other RMI nodes to be ready to load it if a class from it is sent over the
+	 * stream.
 	 * 
 	 * @param url the codebase to add
 	 */
@@ -785,6 +824,12 @@ public final class RMIRegistry {
 		getRmiClassLoader().addCodebase(url);
 	}
 
+	/**
+	 * Removes a static codebase previously added.
+	 * 
+	 * @see #addCodebase(URL)
+	 * @param url the URL of the codebase
+	 */
 	public void removeCodebase(URL url) {
 		getRmiClassLoader().removeCodebase(url);
 	}
@@ -846,9 +891,7 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Finalizes this registry instance and all its current open connections. This
-	 * method is also called by the Garbage Collector when the registry is no longer
-	 * referenced
+	 * Finalizes this registry instance and all its current open connections.
 	 */
 	@Override
 	public void finalize() {
@@ -856,14 +899,12 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Finalizes this registry instance and all its current open connections. This
-	 * method is also called by the Garbage Collector when the registry is no longer
-	 * referenced
+	 * Finalizes this registry instance and all its current open connections.
 	 * 
-	 * @param signalHandlersFailures set to true if you want all the
-	 *                               {@link RMIHandler} instances created by this
-	 *                               registry to send a signal to the failure
-	 *                               observers
+	 * @param signalHandlersFailures set to true if all the {@link RMIHandler}
+	 *                               instances created by this registry should send
+	 *                               a signal to the attached {@link RMIFaultHandler
+	 *                               fault handlers}
 	 */
 	public void finalize(boolean signalHandlersFailures) {
 		synchronized (lock) {
@@ -885,77 +926,40 @@ public final class RMIRegistry {
 			@Override
 			public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces)
 					throws IOException {
+				if (System.getSecurityManager() != null)
+					System.getSecurityManager().checkConnect(address, port);
 				return RMIRegistry.this.getStub(address, port, objectId, stubInterfaces);
 			}
 
 			@Override
 			public Object getStub(String address, int port, String objectId) throws IOException, InterruptedException {
+				if (System.getSecurityManager() != null)
+					System.getSecurityManager().checkConnect(address, port);
 				return RMIRegistry.this.getStub(address, port, objectId);
-			}
-
-			@Override
-			public String toString() {
-				return "{[StubRetriever] registryKey=" + registryKey + "}";
 			}
 		};
 	}
 
 	/**
-	 * Gets the stub for the specified object identifier on the specified host
-	 * respect to the given interface. This method creates a new {@link RMIHandler}
-	 * if necessary to communicate with the specified host. The new
-	 * {@link RMIHandler} can be obtained by calling the
-	 * {@link #getRMIHandler(String, int)} method.
+	 * Builds a stub for the specified object identifier on the specified host
+	 * respect to the given interface. This method creates the stub locally without
+	 * performing TCP communications.
 	 * 
 	 * @param address        the host address
 	 * @param port           the host port
 	 * @param objectId       the remote object identifier
 	 * @param stubInterfaces the interfaces implemented by the stub
 	 * @return the stub object
-	 * @throws UnknownHostException if the host address cannot be resolved
-	 * @throws IOException          if I/O errors occur
 	 */
-	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces) throws IOException {
-		synchronized (lock) {
-			return getRMIHandler(address, port, multiConnectionMode).getStub(objectId, stubInterfaces);
-		}
-	}
-
-	/**
-	 * Gets the stub for the specified object identifier on the specified host
-	 * respect to the given interface. This method creates a new {@link RMIHandler}
-	 * if necessary to communicate with the specified host. The new
-	 * {@link RMIHandler} can be obtained by calling the
-	 * {@link #getRMIHandler(String, int)} method.
-	 * 
-	 * @param address        the host address
-	 * @param port           the host port
-	 * @param objectId       the remote object identifier
-	 * @param newConnection  always create a new handler without getting an already
-	 *                       existing one. This parameter overrides the
-	 *                       {@link #isMultiConnectionMode} attribute
-	 * @param stubInterfaces the interfaces implemented by the stub
-	 * @return the stub object
-	 * @throws UnknownHostException if the host address cannot be resolved
-	 * @throws IOException          if I/O errors occur
-	 * @throws InterruptedException if the current thread is interrupted during the
-	 *                              operation
-	 */
-	public Object getStub(String address, int port, String objectId, boolean newConnection, Class<?>... stubInterfaces)
-			throws IOException, InterruptedException {
-		synchronized (lock) {
-			if (newConnection) {
-				return getRMIHandler(address, port, true).getStub(objectId);
-			}
-			return Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
-					new RemoteInvocationHandler(this, address, port, objectId));
-		}
+	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces) {
+		return Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
+				new RemoteInvocationHandler(this, address, port, objectId));
 	}
 
 	/**
 	 * Gets a stub for the specified object identifier representing a remote object
 	 * on a remote machine. This method performs a request to the remote machine to
-	 * get the remote interfaces of the remote object, then creates its stub. All
+	 * get the remote interfaces of the remote object, then it creates the stub. All
 	 * the remote interfaces of the remote object must be visible by the default
 	 * class loader and they must be known by the local runtime.
 	 * 
@@ -965,51 +969,28 @@ public final class RMIRegistry {
 	 * @return A dynamic proxy object that represents the remote instance. It is an
 	 *         instance for the specified stub interface
 	 * 
-	 * @throws UnknownHostException if the host cannot be resolved
-	 * @throws IOException          if an I/O error occurs
-	 * @throws InterruptedException if the current thread is iterrupted during
+	 * @throws UnknownHostException if the remote host cannot be found
+	 * @throws IOException          if an I/O error occurs while contacting the
+	 *                              remote machine
+	 * @throws InterruptedException if the current thread is interrupted during
 	 *                              operation
 	 */
 	public Object getStub(String address, int port, String objectId)
 			throws UnknownHostException, IOException, InterruptedException {
-		return getStub(address, port, objectId, multiConnectionMode);
+		return getRMIHandler(address, port, multiConnectionMode).getStub(objectId);
 	}
 
 	/**
-	 * Gets a stub for the specified object identifier representing a remote object
-	 * on a remote machine. This method performs a request to the remote machine to
-	 * get the remote interfaces of the remote object, then creates its stub. All
-	 * the remote interfaces of the remote object must be visible by the default
-	 * class loader and they must be known by the local runtime.
-	 * 
-	 * @param address          the host address
-	 * @param port             the host port
-	 * @param objectId         the object identifier
-	 * @param createNewHandler always create a new handler without getting an
-	 *                         already existing one. This parameter overrides the
-	 *                         {@link #isMultiConnectionMode} attribute
-	 * @return A dynamic proxy object that represents the remote instance. It is an
-	 *         instance for the specified stub interface
-	 * 
-	 * @throws UnknownHostException if the host cannot be resolved
-	 * @throws IOException          if an I/O error occurs
-	 * @throws InterruptedException if the current thread is iterrupted during
-	 *                              operation
-	 */
-	public Object getStub(String address, int port, String objectId, boolean createNewHandler)
-			throws UnknownHostException, IOException, InterruptedException {
-
-		return getRMIHandler(address, port, createNewHandler).getStub(objectId);
-	}
-
-	/**
-	 * Gets an {@link RMIHandler} instance for the specified host. If it has not
-	 * been created, creates it. If some RMIHandler already exists, gets one of
-	 * them.
+	 * Gets an {@link RMIHandler handler} for the specified host. If it has not been
+	 * created, then creates it. If any {@link RMIHandler handler} already exists
+	 * and {@link #setMultiConnectionMode(boolean) multi-connection mode} is
+	 * disabled, gets one of them. If {@link #setMultiConnectionMode(boolean)
+	 * multi-connection mode} is enabled, this method creates a new, never used,
+	 * {@link RMIHandler handler}.
 	 * 
 	 * @param host the host address
 	 * @param port the host port
-	 * @return the object peer related to the specified host
+	 * @return a handler related to the specified host
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occur
 	 */
@@ -1018,14 +999,15 @@ public final class RMIRegistry {
 	}
 
 	/**
-	 * Gets an {@link RMIHandler} instance for the specified host. If it has not
-	 * been created, creates it.
+	 * Gets an {@link RMIHandler handler} for the specified host. If it has not been
+	 * created, then creates it. If a new connection must be created, this method
+	 * returns a new, never used, {@link RMIHandler handler}.
 	 * 
 	 * @param host          the host address
 	 * @param port          the host port
-	 * @param newConnection always create a new handler without getting an already
-	 *                      existing one
-	 * @return the object peer related to the specified host
+	 * @param newConnection set to true to create a new handler without getting an
+	 *                      already existing one
+	 * @return a handler related to the specified host
 	 * @throws UnknownHostException if the host address cannot be resolved
 	 * @throws IOException          if I/O errors occurs
 	 */
@@ -1172,31 +1154,33 @@ public final class RMIRegistry {
 	 *                                  that is /\#[0-9]+/
 	 */
 	public void publish(String name, Object object) {
-
 		if (name.startsWith(Skeleton.IDENTIFIER_PREFIX))
 			throw new IllegalArgumentException("The name prefix '" + Skeleton.IDENTIFIER_PREFIX
 					+ "' is reserved to atomatic referencing. Please use another name pattern.");
 
-		Skeleton sk = null;
-		if (skeletonByObject.containsKey(object)) {
-			sk = skeletonByObject.get(object);
+		synchronized (lock) {
+			Skeleton sk = null;
+			if (skeletonByObject.containsKey(object)) {
+				sk = skeletonByObject.get(object);
+				sk.addNames(name);
+				getSkeletonByIdMap().put(name, sk);
 
-			if (getSkeletonByIdMap().containsKey(name) && getSkeletonByIdMap().get(name) != sk)
-				throw new IllegalArgumentException("the given object name '" + name + "' is already bound.");
+				if (getSkeletonByIdMap().containsKey(name) && getSkeletonByIdMap().get(name) != sk)
+					throw new IllegalArgumentException("the given object name '" + name + "' is already bound.");
 
-			if (sk.getObject() != object)
-				throw new IllegalStateException(
-						"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
-		} else {
-			if (getSkeletonByIdMap().containsKey(name))
-				throw new IllegalArgumentException("the given object name '" + name + "' is already bound.");
-			sk = new Skeleton(object, this);
-			getSkeletonByIdMap().put(sk.getId(), sk);
-			skeletonByObject.put(object, sk);
+				if (sk.getRemoteObject() != object)
+					throw new IllegalStateException(
+							"INTERNAL ERROR: the given object is associated to a skeleton that does not references it");
+			} else {
+				if (getSkeletonByIdMap().containsKey(name))
+					throw new IllegalArgumentException("the given object name '" + name + "' is already bound.");
+				sk = new Skeleton(object, this);
+				sk.addNames(name);
+				getSkeletonByIdMap().put(name, sk);
+				getSkeletonByIdMap().put(sk.getId(), sk);
+				skeletonByObject.put(object, sk);
+			}
 		}
-		getSkeletonByIdMap().put(name, sk);
-		sk.addNames(name);
-
 	}
 
 	/**
@@ -1207,29 +1191,20 @@ public final class RMIRegistry {
 	 * @return the generated identifier
 	 */
 	public String publish(Object object) {
-		try {
-			return executorService.submit(() -> {
-				synchronized (lock) {
-					if (skeletonByObject.containsKey(object)) {
-						Skeleton sk = skeletonByObject.get(object);
-						if (sk.getObject() != object)
-							throw new IllegalStateException(
-									"the given object is associated to a skeleton that does not references it");
-						return sk.getId();
-					} else {
-						Skeleton sk = new Skeleton(object, this);
-						getSkeletonByIdMap().put(sk.getId(), sk);
-						skeletonByObject.put(object, sk);
-						return sk.getId();
-					}
-				}
-			}).get();
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-		} catch (ExecutionException e) {
-			throw (RuntimeException) e.getCause();
+		synchronized (lock) {
+			if (skeletonByObject.containsKey(object)) {
+				Skeleton sk = skeletonByObject.get(object);
+				if (sk.getRemoteObject() != object)
+					throw new IllegalStateException(
+							"the given object is associated to a skeleton that does not references it");
+				return sk.getId();
+			} else {
+				Skeleton sk = new Skeleton(object, this);
+				getSkeletonByIdMap().put(sk.getId(), sk);
+				skeletonByObject.put(object, sk);
+				return sk.getId();
+			}
 		}
-		return null;
 	}
 
 	/**
@@ -1280,7 +1255,7 @@ public final class RMIRegistry {
 		synchronized (lock) {
 			Skeleton skeleton = getSkeletonByIdMap().get(objectId);
 			if (skeleton != null)
-				return skeleton.getObject();
+				return skeleton.getRemoteObject();
 			else
 				return null;
 		}

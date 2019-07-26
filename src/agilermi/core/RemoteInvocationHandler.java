@@ -32,9 +32,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import agilermi.annotation.RMIAsynch;
-import agilermi.annotation.RMICached;
-import agilermi.annotation.RMISuppressFaults;
+import agilermi.configuration.annotation.RMIAsynch;
+import agilermi.configuration.annotation.RMICached;
+import agilermi.configuration.annotation.RMISuppressFaults;
 import agilermi.exception.LocalAuthenticationException;
 import agilermi.exception.RemoteException;
 

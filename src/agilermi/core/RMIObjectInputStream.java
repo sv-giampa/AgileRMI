@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectStreamClass;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
@@ -52,7 +53,7 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 	private RMIHandler rmiHandler;
 	private RMIClassLoader rmiClassLoader;
 	// private Set<URL> remoteCodebases = new HashSet<>();
-	private Map<URL, ClassLoader> remoteCodebases = new HashMap<>();
+	private Map<URL, WeakReference<ClassLoader>> remoteCodebases = new HashMap<>();
 
 	public RMIObjectInputStream(InputStream inputStream, RMIHandler handler, InetSocketAddress address,
 			ClassLoaderFactory classLoaderFactory) throws IOException {
@@ -92,7 +93,6 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 	@Override
 	protected synchronized Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
 		if (desc.getName().equals(StubRetriever.class.getName())) {
-
 			return StubRetriever.class;
 		}
 		// tries to solve class through the system class-loaders
@@ -112,17 +112,22 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 			try {
 				// System.out.printf("Trying codebase %s to load class %s\n", codebase,
 				// desc.getName());
-				ClassLoader classLoader = remoteCodebases.get(codebase);
+				ClassLoader classLoader = null;
+				WeakReference<ClassLoader> wr = remoteCodebases.get(codebase);
+				if (wr != null)
+					classLoader = wr.get();
+
 				if (classLoader == null) {
 					classLoader = new WrapperClassLoader(registry.getClassLoaderFactory(), codebase);
-					remoteCodebases.put(codebase, classLoader);
+					remoteCodebases.put(codebase, new WeakReference<ClassLoader>(classLoader));
 				}
 				Class<?> cls = classLoader.loadClass(desc.getName());
 				rmiClassLoader.addActiveCodebase(codebase, classLoader);
 				return cls;
 			} catch (Exception e) {
-				System.out.printf("Codebase %s cannot be used to load class %s\n%s\n", codebase, desc.getName(),
-						e.toString());
+				if (Debug.RMI_INPUT_STREAM)
+					System.out.printf("Codebase %s cannot be used to load class %s\n%s\n", codebase, desc.getName(),
+							e.toString());
 			}
 		}
 		return super.resolveClass(desc);
@@ -171,7 +176,7 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 				if (registry.getRegistryKey().equals(sih.remoteRegistryKey)) {
 					Skeleton skeleton = registry.getSkeleton(sih.getObjectId());
 					if (skeleton != null)
-						return skeleton.getObject();
+						return skeleton.getRemoteObject();
 				}
 			}
 
@@ -190,7 +195,6 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 
 	@Override
 	protected void finalize() throws Throwable {
-		reset();
 		super.finalize();
 	}
 

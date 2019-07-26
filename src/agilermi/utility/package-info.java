@@ -16,6 +16,6 @@
  **/
 
 /**
- * Provides modules that expose remote version of some utility class
+ * Provides modules that expose remote version of some standard class
  */
 package agilermi.utility;

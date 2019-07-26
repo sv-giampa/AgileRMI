@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <project default="javadoc">
     <target name="javadoc">
-        <javadoc access="public" author="true" classpath="." destdir="docs" doctitle="AgileRMI Library" nodeprecated="false" nodeprecatedlist="false" noindex="false" nonavbar="false" notree="false" packagenames="agilermi.communication.stackprotocol,agilermi.configuration,agilermi.utility,agilermi.codemobility,agilermi,agilermi.authentication,agilermi.communication.gzip,agilermi.utility.bytestream,agilermi.utility.file,agilermi.exception,agilermi.core,agilermi.utility.logging,agilermi.annotation,agilermi.communication" source="1.8" sourcepath="src" splitindex="true" use="true" version="true"/>
+        <javadoc access="public" author="true" classpath="." destdir="docs" doctitle="AgileRMI Library" nodeprecated="false" nodeprecatedlist="false" noindex="false" nonavbar="false" notree="false" packagenames="agilermi.communication.stackprotocol,agilermi.configuration,agilermi.utility,agilermi.codemobility,agilermi,agilermi.authentication,agilermi.communication.gzip,agilermi.utility.io,agilermi.utility.file,agilermi.exception,agilermi.core,agilermi.utility.logging,agilermi.configuration.annotation,agilermi.communication" source="1.8" sourcepath="src" splitindex="true" use="true" version="true"/>
     </target>
 </project>

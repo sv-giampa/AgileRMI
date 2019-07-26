@@ -19,9 +19,9 @@ package agilermi.utility.logging;
 
 import java.io.PrintStream;
 
-import agilermi.annotation.RMIAsynch;
-import agilermi.annotation.RMISuppressFaults;
 import agilermi.configuration.Remote;
+import agilermi.configuration.annotation.RMIAsynch;
+import agilermi.configuration.annotation.RMISuppressFaults;
 import agilermi.exception.RemoteException;
 
 /**
