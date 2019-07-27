@@ -1,2 +1,2 @@
-Agile RMI Library
+Agile RMI
 Copyright 2018-2019 Salvatore Giampa'

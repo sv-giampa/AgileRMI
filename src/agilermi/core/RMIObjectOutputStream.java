@@ -48,12 +48,14 @@ import agilermi.configuration.StubRetriever;
  *
  */
 final class RMIObjectOutputStream extends ObjectOutputStream {
+	private RMIHandler handler;
 	private RMIRegistry rmiRegistry;
 	private Class<?> rootType = null;
 
-	public RMIObjectOutputStream(OutputStream outputStream, RMIRegistry rmiRegistry) throws IOException {
+	public RMIObjectOutputStream(OutputStream outputStream, RMIHandler handler) throws IOException {
 		super(outputStream);
-		this.rmiRegistry = rmiRegistry;
+		this.handler = handler;
+		this.rmiRegistry = handler.getRMIRegistry();
 		this.enableReplaceObject(true);
 	}
 
@@ -242,8 +244,10 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			InvocationHandler ih = Proxy.getInvocationHandler(obj);
 			if (ih instanceof RemoteInvocationHandler) {
 				RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
+				RMIHandler handler = rih.getHandler();
+
 				// if obj is a shareable stub, serializes it
-				if (rih.getHandler().areStubsShareable())
+				if (handler != null && rih.getHandler().areStubsShareable())
 					return obj;
 
 				isStub = true;

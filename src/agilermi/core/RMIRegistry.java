@@ -963,7 +963,13 @@ public final class RMIRegistry {
 	/**
 	 * Builds a stub for the specified object identifier on the specified host
 	 * respect to the given interface. This method creates the stub locally without
-	 * performing TCP communications.
+	 * performing TCP communications. So, This method allows to get a stub when the
+	 * remote machine is actually not connected, too.<br>
+	 * <br>
+	 * To know about the possible unchecked exceptions thrown by this method see
+	 * documentation of
+	 * {@link Proxy#newProxyInstance(ClassLoader, Class[], java.lang.reflect.InvocationHandler)
+	 * newProxyInstance} method.
 	 * 
 	 * @param address        the host address
 	 * @param port           the host port
@@ -983,7 +989,12 @@ public final class RMIRegistry {
 	 * on a remote machine. This method performs a request to the remote machine to
 	 * get the remote interfaces of the remote object, then it creates the stub. All
 	 * the remote interfaces of the remote object must be visible by the default
-	 * class loader and they must be known by each local runtime.
+	 * class loader and they must be known by each local runtime.<br>
+	 * <br>
+	 * To know about the possible unchecked exceptions thrown by this method see
+	 * documentation of
+	 * {@link Proxy#newProxyInstance(ClassLoader, Class[], java.lang.reflect.InvocationHandler)
+	 * newProxyInstance} method.
 	 * 
 	 * @param address  the host address
 	 * @param port     the host port

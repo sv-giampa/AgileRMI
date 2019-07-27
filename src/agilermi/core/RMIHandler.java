@@ -42,8 +42,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.WeakHashMap;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.logging.Handler;
 
 import javax.net.SocketFactory;
 
@@ -84,7 +85,7 @@ public final class RMIHandler {
 	private Map<Long, RemoteInterfaceMessage> interfaceRequests = Collections.synchronizedMap(new HashMap<>());
 
 	// The queue for buffered invocations that are ready to be sent over the socket
-	private BlockingQueue<RMIMessage> messageQueue = new ArrayBlockingQueue<>(200, true);
+	private BlockingQueue<RMIMessage> messageQueue = new LinkedBlockingQueue<>();
 
 	// Flag that indicates if this RMIHandler has been disposed.
 	private boolean disposed = false;
@@ -124,6 +125,7 @@ public final class RMIHandler {
 	private boolean started = false;
 
 	private TransmitterThread transmitter = new TransmitterThread();
+
 	private ReceiverThread receiver = new ReceiverThread();
 
 	/**
@@ -269,7 +271,7 @@ public final class RMIHandler {
 		// send and receive authentication
 		handshake(output, input);
 
-		outputStream = new RMIObjectOutputStream(output, registry);
+		outputStream = new RMIObjectOutputStream(output, this);
 		outputStream.flush(); // flushes ObjectOutputStream header
 		inputStream = new RMIObjectInputStream(input, this, inetSocketAddress, registry.getClassLoaderFactory());
 	}
@@ -311,7 +313,9 @@ public final class RMIHandler {
 	 * different object respect to the stub on B, but this fact is transparent to
 	 * the developer).
 	 * 
-	 * @return
+	 * @return true if and only if the stub that refers to the remote machine
+	 *         connected to this {@link Handler handler} are shareable and can be
+	 *         sent to other machines
 	 */
 	boolean areStubsShareable() {
 		return remotePort > 0;
@@ -320,9 +324,13 @@ public final class RMIHandler {
 	synchronized void start() {
 		if (started)
 			return;
+
 		started = true;
 		receiver.start();
 		transmitter.start();
+
+		if (registry.getFaultSimulationProbability() <= 0)
+			new FaultSimulator();
 	}
 
 	/**
@@ -659,7 +667,7 @@ public final class RMIHandler {
 				double die = Math.random();
 				if (die < registry.getFaultSimulationProbability())
 					throw new IOException("Simulated fault. You have setted fault simulation through"
-							+ " the RMIRegistry.setSFaultSimulationProbability() method.");
+							+ " the RMIRegistry.setFaultSimulationProbability() method.");
 			}
 			try {
 				outputStream.writeUnshared(msg);
@@ -954,6 +962,35 @@ public final class RMIHandler {
 			Skeleton sk = registry.getSkeleton(msg.objectId);
 			if (sk != null)
 				sk.removeRef(RMIHandler.this);
+		}
+	}
+
+	private class FaultSimulator extends Thread {
+
+		public FaultSimulator() {
+			setName(this.getClass().getName());
+			setDaemon(true);
+			start();
+		}
+
+		@Override
+		public void run() {
+			if (registry.getFaultSimulationProbability() <= 0)
+				return;
+			try {
+				while (!isInterrupted() && !disposed) {
+					Thread.sleep(1000);
+
+					if (Math.random() <= registry.getFaultSimulationProbability()) {
+						try {
+							socket.close();
+						} catch (IOException e) {
+						}
+						interrupt();
+					}
+				}
+			} catch (InterruptedException e) {
+			}
 		}
 	}
 

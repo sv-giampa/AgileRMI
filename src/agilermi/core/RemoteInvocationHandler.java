@@ -105,7 +105,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 	}
 
-	private void getRMIHandler() throws Exception {
+	private void getRMIHandler() throws RemoteException {
 		try {
 			handler = rmiRegistry.getRMIHandler(host, port);
 			handler.registerStub(this);
@@ -113,7 +113,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			this.remoteRegistryKey = handler.getRemoteRegistryKey();
 		} catch (Exception e) {
 			handler = null;
-			throw e;
+			throw new RemoteException(e);
 		}
 	}
 
@@ -126,19 +126,22 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		String thisClassName = this.getClass().getName();
 		for (int i = 0; i < remoteStack.length; i++) {
 			newStackList.add(remoteStack[i]);
-			String className = remoteStack[i].getClassName();
-			if (className.equals(thisClassName))
-				break;
+			/*
+			 * String className = remoteStack[i].getClassName();
+			 * 
+			 * if (className.equals(thisClassName)) break;
+			 */
 		}
 
 		// add RMI stack trace element
 		newStackList.add(new StackTraceElement("=====> Remote Method Invocation ======>", "", "", -1));
 
 		// add local part of stack trace
-		for (int i = 4; i < localStack.length; i++) {
-			if (localStack[i].getClassName().equals(this.getClass().getName())
-					|| localStack[i].getClassName().contains(".$Proxy"))
-				continue;
+		for (int i = 0; i < localStack.length; i++) {
+			/*
+			 * if (localStack[i].getClassName().equals(this.getClass().getName()) ||
+			 * localStack[i].getClassName().contains(".$Proxy")) continue;
+			 */
 			newStackList.add(localStack[i]);
 		}
 
@@ -178,6 +181,11 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	}
 
 	RMIHandler getHandler() {
+		if (handler == null)
+			try {
+				getRMIHandler();
+			} catch (Exception e) {
+			}
 		return handler;
 	}
 
@@ -256,49 +264,45 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			}
 		}
 
-		invoke(invocation);
+		final int RETRIES = 2;
+		boolean finishInvocation = false;
+		for (int i = 0; i < RETRIES && !finishInvocation; i++) {
+			invoke(invocation);
 
-//		boolean finishInvocation = false;
-//		do {
-//			invoke(invocation);
-//			
-//			if (invocation.success) {
-//				if (Debug.INVOCATION_HANDLERS)
-//					System.out.println(RemoteInvocationHandler.class.getName() + " invocation success!");
-//				finishInvocation = true;
-//			} else {
-//				if (Debug.INVOCATION_HANDLERS)
-//					System.out.println(RemoteInvocationHandler.class.getName() + " invocation error!");
-//
-//				long timeout;
-//				if (handler == null)
-//					timeout = System.currentTimeMillis() + rmiRegistry.getLatencyTime();
-//				else
-//					timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
-//
-//				do {
-//					try {
-//						getRMIHandler();
-//						if (Debug.INVOCATION_HANDLERS)
-//							System.out.println(RemoteInvocationHandler.class.getName() + " handler repaired!");
-//					} catch (Exception e) {
-//						invocation.thrownException = e;
-//						if (Debug.INVOCATION_HANDLERS)
-//							System.out.println(RemoteInvocationHandler.class.getName() + " handler repair error!");
-//					}
-//
-//					if (Debug.INVOCATION_HANDLERS) {
-//						System.out.println(
-//								RemoteInvocationHandler.class.getName() + " handler==null? " + (handler == null));
-//						System.out.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
-//								+ handler.isDisposed());
-//					}
-//				} while ((finishInvocation = handler == null || handler.isDisposed())
-//						&& System.currentTimeMillis() < timeout);
-//			}
-//		} while (!finishInvocation);
+			if (handler == null || handler.isDisposed()) {
+				if (Debug.INVOCATION_HANDLERS)
+					System.out.println(RemoteInvocationHandler.class.getName() + " invocation error!");
 
-		if (invocation.returnValue == null) {
+				long timeout;
+				if (handler == null)
+					timeout = System.currentTimeMillis() + rmiRegistry.getLatencyTime();
+				else
+					timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
+
+				do {
+					try {
+						getRMIHandler();
+						if (Debug.INVOCATION_HANDLERS)
+							System.out.println(RemoteInvocationHandler.class.getName() + " handler repaired!");
+					} catch (RemoteException e) {
+						invocation.thrownException = e;
+						if (Debug.INVOCATION_HANDLERS)
+							System.out.println(RemoteInvocationHandler.class.getName() + " handler repair error!");
+					}
+
+					if (Debug.INVOCATION_HANDLERS) {
+						System.out.println(
+								RemoteInvocationHandler.class.getName() + " handler==null? " + (handler == null));
+						System.out.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
+								+ handler.isDisposed());
+					}
+				} while ((handler == null || handler.isDisposed()) && System.currentTimeMillis() < timeout);
+			} else
+				finishInvocation = true;
+		}
+
+		// System.out.println("return value: " + invocation.returnValue);
+		if (invocation.thrownException instanceof RemoteException) {
 			if (methodName.equals("equals") && parameterTypes.length == 1 && parameterTypes[0] == Object.class)
 				return Boolean.valueOf(false);
 			if (methodName.equals("hashCode") && parameterTypes.length == 0)
