@@ -15,7 +15,7 @@ public class BootFaultSimulationClient {
 		while (true) {
 			try {
 				double number = server.nextNumber();
-				System.out.println("random number generated: " + number);
+				System.out.println("next number: " + number);
 			} catch (RemoteException e) {
 				System.out.println("connection fault!");
 			}
