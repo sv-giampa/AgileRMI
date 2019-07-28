@@ -13,7 +13,7 @@ The fundamental specifics and goals of the library:
 - The possibility to use custom underlying protocols, putting new layers between the RMI protocol and the TCP protocol;
 - Supports the full remote reference exchange, when remote references are sent into serializable objects, too, as Java RMI can do. The remote objects on the local machine are automatically referenced as remote objects when they are sent on the RMI object output streams;
 - It provides a full distributed garbage collection system to avoid memory leaks on the machines that expose remote objects.
-- Supports a built-in authentication for new RMI incoming connections and access authorization on invocations. The authentication and the authorization methods are fully customizable by the developer through the RMIAuthenticator interface. For instance, this functionality is useful to authenticate the users respect to a database. Moreover, AgileRMI provides its basic, non-scalable implementation for authentication and authorization, too, exported by the RMIStandardAuthenticator class.
+- Supports a built-in authentication for new RMI incoming connections and access authorization on invocations. The authentication and the authorization methods are fully customizable by the developer through the RMIAuthenticator interface. For instance, this functionality is useful to authenticate the users respect to a database. Moreover, AgileRMI provides its basic, non-scalable implementation for authentication and authorization, too, exported by the StandardRMIAuthenticator class.
 
 ## References
 See the documentation at: https://sv-giampa.github.io/AgileRMI/
