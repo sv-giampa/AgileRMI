@@ -61,7 +61,8 @@ import agilermi.exception.RemoteException;
  * This class defines a RMI connection handler. The instances of this class
  * manages all the RMI communication protocol between the local machine and a
  * remote machine. This class can be instantiated through the RMIRegistry only.
- * See the {@link RMIRegistry#getRMIHandler(String, int, boolean)} method
+ * See the {@link RMIRegistry#getRMIHandler(String, int, boolean)
+ * getRMIHandler(...)} method
  * 
  * @author Salvatore Giampa'
  *
@@ -329,8 +330,12 @@ public final class RMIHandler {
 		receiver.start();
 		transmitter.start();
 
-		if (registry.getFaultSimulationProbability() <= 0)
-			new FaultSimulator();
+		if (registry.getHandlerFaultMaxLife() > 0) {
+			// inverse exponential distribution
+			double lambda = -(Math.log(0.001) / registry.getHandlerFaultMaxLife());
+			long actualLife = (long) -(Math.log(1 - Math.random()) / lambda);
+			new FaultTrigger(actualLife);
+		}
 	}
 
 	/**
@@ -563,8 +568,8 @@ public final class RMIHandler {
 			throw new IllegalArgumentException("No interface has been passed");
 
 		Object stub;
-		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces, new RemoteInvocationHandler(
-				registry, inetSocketAddress.getHostString(), inetSocketAddress.getPort(), objectId));
+		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
+				new RemoteInvocationHandler(this, objectId));
 		return stub;
 	}
 
@@ -630,7 +635,6 @@ public final class RMIHandler {
 					System.out.println("[RMIHandler.transmitter] transmitter thrown the following exception:");
 					exception.printStackTrace();
 				}
-				// exception.printStackTrace();
 
 				if (rmiMessage != null)
 					messageQueue.add(rmiMessage);
@@ -663,12 +667,6 @@ public final class RMIHandler {
 
 		@Override
 		public void handle(InvocationMessage msg) throws Exception {
-			if (registry.getFaultSimulationProbability() > 0) {
-				double die = Math.random();
-				if (die < registry.getFaultSimulationProbability())
-					throw new IOException("Simulated fault. You have setted fault simulation through"
-							+ " the RMIRegistry.setFaultSimulationProbability() method.");
-			}
 			try {
 				outputStream.writeUnshared(msg);
 				outputStream.flush();
@@ -749,7 +747,6 @@ public final class RMIHandler {
 						rmiMessage = (RMIMessage) (inputStream.readUnshared());
 					} catch (Exception e) {
 						if (Debug.RMI_HANDLER) {
-							System.out.println("[RMIHandler.receiver] Exception while receiving RMI message: " + e);
 							e.printStackTrace();
 						}
 						ReturnMessage retHandle = new ReturnMessage();
@@ -764,10 +761,8 @@ public final class RMIHandler {
 				}
 			} catch (Exception e) { // something gone wrong, dispose this handler
 				if (Debug.RMI_HANDLER) {
-					System.out.println("[RMIHandler.receiver] receiver thrown the following exception:");
 					e.printStackTrace();
 				}
-				// e.printStackTrace();
 
 				if (disposed)
 					return;
@@ -840,9 +835,10 @@ public final class RMIHandler {
 				new InvocationThread(msg, skeleton, method);
 			} else {
 				// not authorized: send an authorization exception
-				ReturnMessage retHandle = new ReturnMessage();
-				retHandle.invocationId = msg.id;
-				retHandle.thrownException = new AuthorizationException();
+				ReturnMessage response = new ReturnMessage();
+				response.invocationId = msg.id;
+				response.thrownException = new AuthorizationException();
+				messageQueue.put(response);
 			}
 		}
 
@@ -864,35 +860,35 @@ public final class RMIHandler {
 
 			@Override
 			public void run() {
-				ReturnMessage retMessage = new ReturnMessage();
-				retMessage.invocationId = msg.id;
+				ReturnMessage response = new ReturnMessage();
+				response.invocationId = msg.id;
 				try {
 
-					retMessage.returnValue = skeleton.invoke(msg.method, msg.parameterTypes, msg.parameters,
+					response.returnValue = skeleton.invoke(msg.method, msg.parameterTypes, msg.parameters,
 							remoteRegistryKey, msg.id);
 
 					// set invocation return class
-					retMessage.returnClass = method.getReturnType();
+					response.returnClass = method.getReturnType();
 
 				} catch (InvocationTargetException e) {
 					// e.printStackTrace();
-					retMessage.thrownException = e.getCause();
+					response.thrownException = e.getCause();
 				} catch (NoSuchMethodException e) {
 					// e.printStackTrace();
-					retMessage.thrownException = new NoSuchMethodException(
+					response.thrownException = new NoSuchMethodException(
 							"The method '" + msg.method + "(" + Arrays.toString(msg.parameterTypes)
 									+ ")' does not exists for the object with identifier '" + msg.objectId + "'.");
 				} catch (SecurityException e) {
 					// e.printStackTrace();
-					retMessage.thrownException = e;
+					response.thrownException = e;
 				} catch (IllegalAccessException e) {
 					// e.printStackTrace();
 				} catch (IllegalArgumentException e) {
 					// e.printStackTrace();
-					retMessage.thrownException = e;
+					response.thrownException = e;
 				} catch (NullPointerException e) {
 					// e.printStackTrace();
-					retMessage.thrownException = e;
+					response.thrownException = e;
 				}
 
 				activeInvocations.remove(msg.id);
@@ -902,14 +898,14 @@ public final class RMIHandler {
 				if (!msg.asynch)
 					while (true)
 						try {
-							messageQueue.put(retMessage);
+							messageQueue.put(response);
 							return;
 						} catch (InterruptedException e) {
 						}
-				else if (retMessage.thrownException != null) {
+				else if (response.thrownException != null) {
 					System.err.println("RMI asynchronous method '" + method
 							+ "' (annotated with @RMIAsynch) thrown the following exception.");
-					retMessage.thrownException.printStackTrace();
+					response.thrownException.printStackTrace();
 				}
 			}
 		}
@@ -965,9 +961,11 @@ public final class RMIHandler {
 		}
 	}
 
-	private class FaultSimulator extends Thread {
+	private class FaultTrigger extends Thread {
+		private long timeout;
 
-		public FaultSimulator() {
+		public FaultTrigger(long timeout) {
+			this.timeout = timeout;
 			setName(this.getClass().getName());
 			setDaemon(true);
 			start();
@@ -975,21 +973,12 @@ public final class RMIHandler {
 
 		@Override
 		public void run() {
-			if (registry.getFaultSimulationProbability() <= 0)
-				return;
 			try {
-				while (!isInterrupted() && !disposed) {
-					Thread.sleep(1000);
-
-					if (Math.random() <= registry.getFaultSimulationProbability()) {
-						try {
-							socket.close();
-						} catch (IOException e) {
-						}
-						interrupt();
-					}
-				}
+				Thread.sleep(timeout);
+				socket.close();
+				System.out.println("[" + this.getClass().getName() + "] fault triggered");
 			} catch (InterruptedException e) {
+			} catch (IOException e) {
 			}
 		}
 	}

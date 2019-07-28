@@ -14,7 +14,13 @@ import agilermi.exception.RemoteException;
  * annotation, it should not be declared to throw {@link RemoteException}. Be
  * careful using this annotation, it changes the semantics of remote method and
  * it does not allow the application to notice any stub fault, such as the
- * expiration of a remote pointer.
+ * expiration of a remote pointer. <br>
+ * <br>
+ * Each method which encounter an RMI fault and suppress it will return the
+ * default value for its return type. The default values are <code>0</code> for
+ * all numerical primitive (such as int) and non-primitive (such as
+ * {@link Integer}) types, <code>false</code> for the boolean type and
+ * <code>null</code> for object types.
  * 
  * @author Salvatore Giampa'
  *

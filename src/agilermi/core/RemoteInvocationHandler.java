@@ -52,6 +52,10 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private int port;
 
 	private int hashCode;
+	private transient RMIRegistry rmiRegistry;
+
+	private transient RMIHandler handler;
+
 	String remoteRegistryKey;
 
 	private static class RMICache {
@@ -60,8 +64,6 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	}
 
 	private transient Map<Method, RMICache> cache = Collections.synchronizedMap(new HashMap<>());
-	private transient RMIRegistry rmiRegistry;
-	private transient RMIHandler handler;
 
 	private void writeObject(ObjectOutputStream out) throws IOException {
 		if (!(out instanceof RMIObjectOutputStream))
@@ -199,7 +201,22 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		try {
 			getRMIHandler();
 		} catch (Exception e) {
+		}
 
+	}
+
+	public RemoteInvocationHandler(RMIHandler handler, String objectId) {
+		this.objectId = objectId;
+
+		this.handler = handler;
+		this.rmiRegistry = handler.getRMIRegistry();
+		this.host = handler.getInetSocketAddress().getHostString();
+		this.port = handler.getInetSocketAddress().getPort();
+		this.remoteRegistryKey = handler.getRemoteRegistryKey();
+
+		try {
+			getRMIHandler();
+		} catch (Exception e) {
 		}
 
 	}
@@ -265,11 +282,11 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		final int RETRIES = 2;
-		boolean finishInvocation = false;
-		for (int i = 0; i < RETRIES && !finishInvocation; i++) {
+		boolean success = false;
+		for (int i = 0; i < RETRIES && !success; i++) {
 			invoke(invocation);
 
-			if (handler == null || handler.isDisposed()) {
+			if (i < RETRIES - 1 && (handler == null || handler.isDisposed())) {
 				if (Debug.INVOCATION_HANDLERS)
 					System.out.println(RemoteInvocationHandler.class.getName() + " invocation error!");
 
@@ -298,7 +315,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 					}
 				} while ((handler == null || handler.isDisposed()) && System.currentTimeMillis() < timeout);
 			} else
-				finishInvocation = true;
+				success = true;
 		}
 
 		// System.out.println("return value: " + invocation.returnValue);
@@ -325,7 +342,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		if (invocation.thrownException != null) {
-			if (!(invocation.thrownException instanceof RemoteException && suppressFaults)) {
+			if (!(invocation.thrownException instanceof RemoteException
+					&& (suppressFaults || rmiRegistry.allInvocationFaultsSuppressed()))) {
 				virtualiseStackTrace(invocation.thrownException);
 				throw invocation.thrownException;
 			}
@@ -336,7 +354,8 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 		Class<?> returnType = method.getReturnType();
 
-		if (handler == null && handler.isDisposed() && !returnType.equals(void.class)
+		// returns default type when faults are suppressed
+		if ((handler == null || handler.isDisposed()) && !returnType.equals(void.class)
 				&& invocation.returnValue == null) {
 			if (returnType.isPrimitive()) {
 				if (returnType == boolean.class)

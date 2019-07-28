@@ -105,7 +105,7 @@ public final class RMIClassLoader extends ClassLoader {
 	 * codebase that contains the code of the local application). This method cannot
 	 * remove remotely loaded codebases.
 	 * 
-	 * @param url the url of the codebase to remove
+	 * @param urls the urls of the code-bases to remove
 	 */
 	public void removeCodebases(URL... urls) {
 		for (URL url : urls)
