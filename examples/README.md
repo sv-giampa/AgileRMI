@@ -1,9 +1,3 @@
-# AgileRMI Example Application
-As is usually done in Java RMI, the application is divided in three projects:
-- The Commons project: collects all the interfaces that are shared between client and server;
-- The Server project: implements the Commons' interfaces and provide an implementation of the business services;
-- The Client project: creates the stubs of the remote objects and uses them.
-
-To see and explore this example application, imports all these three Eclipse projects provided in this folder.
-They are linked through build paths.
-Then start the server first, and the client later.
+# Agile RMI Example Projects
+This folder contains some example project that focuses on the most important features of Agile RMI.
+Each project is linked with the main project of the Agile RMI library, that can be found at the root of the repository.
