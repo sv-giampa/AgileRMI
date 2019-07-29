@@ -4,32 +4,30 @@ import java.io.IOException;
 
 import agilermi.core.RMIRegistry;
 
-public class Routed {
+public class Tunnel {
+
 	private static class MyService implements Service {
+		Service service;
 
 		@Override
 		public Service getService() {
-			return null;
+			return service;
 		}
 
 		@Override
 		public void setService(Service service) {
-			return;
+			this.service = service;
 		}
 
 		@Override
 		public void useThisService() {
-			System.out.println(System.currentTimeMillis() + ": RouteD service used!");
+			System.out.println(System.currentTimeMillis() + ": tunnel service invoked!");
 		}
 	}
 
 	public static void main(String[] args) throws IOException, InterruptedException {
-		RMIRegistry rMIRegistry = RMIRegistry.builder().build();
-
-		Service service = new MyService();
-		// rMIRegistry.publish("service", service);
-
-		Service remoteService = (Service) rMIRegistry.getStub("localhost", 3333, "service");
-		remoteService.setService(service);
+		RMIRegistry rmiRegistry = RMIRegistry.builder().build();
+		rmiRegistry.publish("tunnel", new MyService());
+		rmiRegistry.enableListener(3333, false);
 	}
 }

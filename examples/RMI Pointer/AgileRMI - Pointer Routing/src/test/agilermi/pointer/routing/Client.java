@@ -9,7 +9,7 @@ public class Client {
 	public static void main(String[] args) throws IOException, InterruptedException {
 		RMIRegistry rMIRegistry = RMIRegistry.builder().build();
 
-		Service routingService = (Service) rMIRegistry.getStub("localhost", 3333, "service");
+		Service routingService = (Service) rMIRegistry.getStub("localhost", 3333, "tunnel");
 		Service routedService = routingService.getService();
 
 		routedService.useThisService();
