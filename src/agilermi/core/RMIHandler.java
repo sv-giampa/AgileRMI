@@ -269,7 +269,6 @@ public final class RMIHandler {
 			input = protocolEndpoint.getInputStream();
 		}
 
-		// send and receive authentication
 		handshake(output, input);
 
 		outputStream = new RMIObjectOutputStream(output, this);
@@ -456,10 +455,10 @@ public final class RMIHandler {
 			messageQueue.clear();
 		}
 
-		registry.removeRMIHandler(this);
+		registry.removeHandler(this);
 
 		if (signalFault)
-			registry.sendRMIHandlerFault(this);
+			registry.notifyFault(this);
 
 		System.gc();
 	}

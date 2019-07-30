@@ -52,7 +52,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	private int port;
 
 	private int hashCode;
-	private transient RMIRegistry rmiRegistry;
+	private transient RMIRegistry registry;
 
 	private transient RMIHandler handler;
 
@@ -89,30 +89,35 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			RMIObjectInputStream rmiInput = (RMIObjectInputStream) in;
 			if (host.equals("localhost") || host.equals("127.0.0.1"))
 				host = rmiInput.getRemoteAddress();
-			rmiRegistry = rmiInput.getRmiRegistry();
+			registry = rmiInput.getRmiRegistry();
 		} else {
-			rmiRegistry = RMIRegistry.builder().build();
+			registry = RMIRegistry.builder().build();
 		}
 
-		boolean willBeReplacedByLocalReference = rmiRegistry.getRegistryKey().equals(remoteRegistryKey)
-				&& rmiRegistry.getSkeleton(objectId) != null;
+		boolean willBeReplacedByLocalReference = registry.getRegistryKey().equals(remoteRegistryKey)
+				&& registry.getSkeleton(objectId) != null;
 
 		if (willBeReplacedByLocalReference)
 			return;
 
 		try {
-			getRMIHandler();
+			findHandler();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
 
-	private void getRMIHandler() throws RemoteException {
+	private void findHandler() throws RemoteException {
 		try {
-			handler = rmiRegistry.getRMIHandler(host, port);
+			if (remoteRegistryKey != null)
+				handler = registry.findHandlerByRegistryKey(remoteRegistryKey);
+
+			if (handler == null)
+				handler = registry.getRMIHandler(host, port);
+
 			handler.registerStub(this);
 			handler.putMessage(new NewReferenceMessage(objectId));
-			this.remoteRegistryKey = handler.getRemoteRegistryKey();
+			remoteRegistryKey = handler.getRemoteRegistryKey();
 		} catch (Exception e) {
 			handler = null;
 			throw new RemoteException(e);
@@ -185,7 +190,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	RMIHandler getHandler() {
 		if (handler == null)
 			try {
-				getRMIHandler();
+				findHandler();
 			} catch (Exception e) {
 			}
 		return handler;
@@ -193,13 +198,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 	public RemoteInvocationHandler(RMIRegistry rmiRegistry, String host, int port, String objectId) {
 		this.objectId = objectId;
-		this.rmiRegistry = rmiRegistry;
+		this.registry = rmiRegistry;
 
 		this.host = host;
 		this.port = port;
 
 		try {
-			getRMIHandler();
+			findHandler();
 		} catch (Exception e) {
 		}
 
@@ -209,13 +214,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		this.objectId = objectId;
 
 		this.handler = handler;
-		this.rmiRegistry = handler.getRMIRegistry();
+		this.registry = handler.getRMIRegistry();
 		this.host = handler.getInetSocketAddress().getHostString();
 		this.port = handler.getInetSocketAddress().getPort();
 		this.remoteRegistryKey = handler.getRemoteRegistryKey();
 
 		try {
-			getRMIHandler();
+			findHandler();
 		} catch (Exception e) {
 		}
 
@@ -292,13 +297,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 				long timeout;
 				if (handler == null)
-					timeout = System.currentTimeMillis() + rmiRegistry.getLatencyTime();
+					timeout = System.currentTimeMillis() + registry.getLatencyTime();
 				else
-					timeout = handler.getDispositionTime() + rmiRegistry.getLatencyTime();
+					timeout = handler.getDispositionTime() + registry.getLatencyTime();
 
 				do {
 					try {
-						getRMIHandler();
+						findHandler();
 						if (Debug.INVOCATION_HANDLERS)
 							System.out.println(RemoteInvocationHandler.class.getName() + " handler repaired!");
 					} catch (RemoteException e) {
@@ -343,7 +348,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 		if (invocation.thrownException != null) {
 			if (!(invocation.thrownException instanceof RemoteException
-					&& (suppressFaults || rmiRegistry.allInvocationFaultsSuppressed()))) {
+					&& (suppressFaults || registry.allInvocationFaultsSuppressed()))) {
 				virtualiseStackTrace(invocation.thrownException);
 				throw invocation.thrownException;
 			}

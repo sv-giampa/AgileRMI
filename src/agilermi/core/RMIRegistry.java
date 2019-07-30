@@ -31,6 +31,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -126,8 +127,10 @@ public final class RMIRegistry {
 	// the server socket created by the last call to the enableListener() method
 	private ServerSocket serverSocket;
 
-	// the peer that are currently online
+	// the handlers that are currently online
 	private Map<InetSocketAddress, List<RMIHandler>> handlers = new HashMap<>();
+
+	private Map<String, List<RMIHandler>> handlersByKey = new HashMap<>();
 
 	// socket factories
 	private ServerSocketFactory serverSocketFactory;
@@ -820,6 +823,16 @@ public final class RMIRegistry {
 	}
 
 	/**
+	 * Gets the code mobility enable flag
+	 * 
+	 * @return true if this registry accepts code from remote codebases, false
+	 *         otherwise
+	 */
+	public boolean isCodeDownloadingEnabled() {
+		return codeDownloadingEnabled;
+	}
+
+	/**
 	 * Equinvalent to calling {@link RMIClassLoader#clearCodebasesSet()} on the
 	 * result of the method {@link #getRmiClassLoader()}.
 	 */
@@ -898,16 +911,6 @@ public final class RMIRegistry {
 	 */
 	public RMIClassLoader getRmiClassLoader() {
 		return rmiClassLoader;
-	}
-
-	/**
-	 * Gets the code mobility enable flag
-	 * 
-	 * @return true if this registry accepts code from remote codebases, false
-	 *         otherwise
-	 */
-	public boolean isCodeDownloadingEnabled() {
-		return codeDownloadingEnabled;
 	}
 
 	/**
@@ -1109,16 +1112,19 @@ public final class RMIRegistry {
 				if (!handlers.containsKey(inetAddress))
 					handlers.put(inetAddress, new ArrayList<>(1));
 				List<RMIHandler> rmiHandlers = handlers.get(inetAddress);
-				RMIHandler rmiHandler = null;
+				RMIHandler handler = null;
 				if (rmiHandlers.size() == 0 || newConnection) {
-					rmiHandler = new RMIHandler(socketFactory.createSocket(host, port), RMIRegistry.this,
+					handler = new RMIHandler(socketFactory.createSocket(host, port), RMIRegistry.this,
 							protocolEndpointFactory, true);
 					// bind handler to host
-					rmiHandlers.add(rmiHandler);
-					rmiHandler.start();
+					rmiHandlers.add(handler);
+					if (!handlersByKey.containsKey(handler.getRemoteRegistryKey()))
+						handlersByKey.put(handler.getRemoteRegistryKey(), new LinkedList<>());
+					handlersByKey.get(handler.getRemoteRegistryKey()).add(handler);
+					handler.start();
 				} else
-					rmiHandler = rmiHandlers.get(0);
-				return rmiHandler;
+					handler = rmiHandlers.get(0);
+				return handler;
 			}
 		};
 
@@ -1157,7 +1163,6 @@ public final class RMIRegistry {
 				for (RMIHandler hnd : rmiHandlers) {
 					hnd.dispose(signalFault);
 				}
-				rmiHandlers.clear();
 			}
 			return null;
 		};
@@ -1523,16 +1528,38 @@ public final class RMIRegistry {
 	}
 
 	/**
+	 * Package-scoped. Find a handler associated to the specified remote registry
+	 * key. This method is primarily used by {@link RemoteInvocationHandler stubs}
+	 * to restore a failed connection.
+	 * 
+	 * @param remoteRegistryKey the key of the remote registry the handler must be
+	 *                          associated to
+	 * @return an {@link RMIHandler handler}
+	 */
+	RMIHandler findHandlerByRegistryKey(String remoteRegistryKey) {
+		synchronized (lock) {
+			List<RMIHandler> handlers = handlersByKey.get(remoteRegistryKey);
+			if (handlers != null && !handlers.isEmpty())
+				return handlersByKey.get(remoteRegistryKey).get(0);
+		}
+		return null;
+	}
+
+	/**
 	 * Package-scoped. Removes a {@link RMIHandler handler} from this registry. This
 	 * method should be used by {@link RMIHandler} itself, only.
 	 * 
 	 * @param handler the {@link RMIHandler handler to remove}
 	 */
-	void removeRMIHandler(RMIHandler handler) {
+	void removeHandler(RMIHandler handler) {
 		synchronized (lock) {
 			List<RMIHandler> list = handlers.get(handler.getInetSocketAddress());
 			if (list != null)
 				list.remove(handler);
+
+			List<RMIHandler> byKey = handlersByKey.get(handler.getRemoteRegistryKey());
+			if (byKey != null)
+				byKey.remove(handler);
 		}
 	}
 
@@ -1543,7 +1570,7 @@ public final class RMIRegistry {
 	 * @param handler   the object peer that caused the failure
 	 * @param exception the exception thrown by the object peer
 	 */
-	void sendRMIHandlerFault(RMIHandler handler) {
+	void notifyFault(RMIHandler handler) {
 		if (finalized)
 			return;
 
