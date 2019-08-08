@@ -48,6 +48,7 @@ import java.util.logging.Handler;
 
 import javax.net.SocketFactory;
 
+import agilermi.authentication.RMIAuthenticator;
 import agilermi.communication.ProtocolEndpoint;
 import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.RMIFaultHandler;
@@ -131,8 +132,8 @@ public final class RMIHandler {
 
 	/**
 	 * Executes the handshake with the remote {@link RMIHandler}. During the
-	 * handshake pahase the handlers exchange the registry keys, the registry
-	 * listener port and the authentication information. This function act the
+	 * handshake phase the handlers exchange the registry keys, the registry
+	 * listener port and the authentication information. This function acts the
 	 * handshake and validate the authentication of the remote handler on the local
 	 * registry. It also ensures that authentication was successful on the remote
 	 * side.
@@ -211,8 +212,8 @@ public final class RMIHandler {
 			throw new LocalAuthenticationException();
 		}
 
-		if (registry.getAuthenticator() == null
-				|| registry.getAuthenticator().authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
+		RMIAuthenticator authenticator = registry.getAuthenticator();
+		if (authenticator == null || authenticator.authenticate(inetSocketAddress, remoteAuthIdentifier, authPass)) {
 			try {
 				outputStream.writeBoolean(true);
 				outputStream.flush();
@@ -728,7 +729,7 @@ public final class RMIHandler {
 	 * remote method to return.
 	 */
 	private class ReceiverThread extends Thread implements RMIMessageHandler {
-		private Map<Long, Thread> activeInvocations = Collections.synchronizedMap(new HashMap<>());
+		private Map<Long, InvocationTask> activeInvocations = Collections.synchronizedMap(new HashMap<>());
 
 		public ReceiverThread() {
 			setName(this.getClass().getName());
@@ -831,7 +832,7 @@ public final class RMIHandler {
 
 			// if authorized, starts the invocation thread
 			if (authorized) {
-				new InvocationThread(msg, skeleton, method);
+				registry.invocationExecutor.submit(new InvocationTask(msg, skeleton, method));
 			} else {
 				// not authorized: send an authorization exception
 				ReturnMessage response = new ReturnMessage();
@@ -841,20 +842,29 @@ public final class RMIHandler {
 			}
 		}
 
-		private class InvocationThread extends Thread {
+		private class InvocationTask implements Runnable {
 			InvocationMessage msg;
 			Skeleton skeleton;
 			Method method;
+			Thread currentThread;
+			boolean interrupted;
 
-			public InvocationThread(InvocationMessage msg, Skeleton skeleton, Method method) {
+			public InvocationTask(InvocationMessage msg, Skeleton skeleton, Method method) {
 				this.msg = msg;
 				this.skeleton = skeleton;
 				this.method = method;
-
 				activeInvocations.put(msg.id, this);
-				setName(this.getClass().getName());
-				setDaemon(true);
-				start();
+
+			}
+
+			public void interrupt() {
+				synchronized (this) {
+					interrupted = true;
+					if (currentThread != null) {
+						currentThread.interrupt();
+						currentThread = null;
+					}
+				}
 			}
 
 			@Override
@@ -862,6 +872,12 @@ public final class RMIHandler {
 				ReturnMessage response = new ReturnMessage();
 				response.invocationId = msg.id;
 				try {
+
+					synchronized (this) {
+						this.currentThread = Thread.currentThread();
+						if (interrupted)
+							currentThread.interrupt();
+					}
 
 					response.returnValue = skeleton.invoke(msg.method, msg.parameterTypes, msg.parameters,
 							remoteRegistryKey, msg.id);

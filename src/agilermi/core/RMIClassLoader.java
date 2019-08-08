@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import agilermi.codemobility.ClassLoaderFactory;
 
@@ -35,6 +37,7 @@ import agilermi.codemobility.ClassLoaderFactory;
  *
  */
 public final class RMIClassLoader extends ClassLoader {
+	private Lock mutex = new ReentrantLock();
 	private int modificationNumber = 0;
 	private Map<URL, ClassLoader> staticCodebases = new HashMap<>();
 	private WeakHashMap<ClassLoader, URL> activeCodebases = new WeakHashMap<>();
@@ -62,20 +65,25 @@ public final class RMIClassLoader extends ClassLoader {
 	 * @param url the codebase url
 	 */
 	public void addCodebase(URL url) {
-		if (staticCodebases.containsKey(url))
-			return;
-		if (activeCodebases.values().contains(url)) {
-			for (Entry<ClassLoader, URL> entry : activeCodebases.entrySet())
-				if (entry.getValue().equals(url)) {
-					staticCodebases.put(entry.getValue(), entry.getKey());
-					break;
-				}
-		} else {
-			ClassLoader classLoader = classLoaderFactory.createClassLoader(url, ClassLoader.getSystemClassLoader());
-			this.staticCodebases.put(url, classLoader);
-			this.activeCodebases.put(classLoader, url);
+		mutex.lock();
+		try {
+			if (staticCodebases.containsKey(url))
+				return;
+			if (activeCodebases.values().contains(url)) {
+				for (Entry<ClassLoader, URL> entry : activeCodebases.entrySet())
+					if (entry.getValue().equals(url)) {
+						staticCodebases.put(entry.getValue(), entry.getKey());
+						break;
+					}
+			} else {
+				ClassLoader classLoader = classLoaderFactory.createClassLoader(url, ClassLoader.getSystemClassLoader());
+				this.staticCodebases.put(url, classLoader);
+				this.activeCodebases.put(classLoader, url);
+			}
+			modificationNumber++;
+		} finally {
+			mutex.unlock();
 		}
-		modificationNumber++;
 	}
 
 	/**
@@ -108,9 +116,14 @@ public final class RMIClassLoader extends ClassLoader {
 	 * @param urls the urls of the code-bases to remove
 	 */
 	public void removeCodebases(URL... urls) {
-		for (URL url : urls)
-			staticCodebases.remove(url);
-		modificationNumber += urls.length;
+		mutex.lock();
+		try {
+			for (URL url : urls)
+				staticCodebases.remove(url);
+			modificationNumber += urls.length;
+		} finally {
+			mutex.unlock();
+		}
 		System.gc();
 	}
 
@@ -122,9 +135,14 @@ public final class RMIClassLoader extends ClassLoader {
 	 * @param url         the codebase url
 	 * @param classLoader the codebase class loader
 	 */
-	synchronized void addActiveCodebase(URL url, ClassLoader classLoader) {
-		activeCodebases.put(classLoader, url);
-		modificationNumber++;
+	void addActiveCodebase(URL url, ClassLoader classLoader) {
+		mutex.lock();
+		try {
+			activeCodebases.put(classLoader, url);
+			modificationNumber++;
+		} finally {
+			mutex.unlock();
+		}
 	}
 
 	/**
@@ -140,27 +158,37 @@ public final class RMIClassLoader extends ClassLoader {
 	}
 
 	@Override
-	protected synchronized Class<?> findClass(String name) throws ClassNotFoundException {
+	protected Class<?> findClass(String name) throws ClassNotFoundException {
+		mutex.lock();
 		try {
-			return ClassLoader.getSystemClassLoader().loadClass(name);
-		} catch (ClassNotFoundException e) {
-		}
-		for (ClassLoader classLoader : activeCodebases.keySet()) {
 			try {
-				return classLoader.loadClass(name);
+				return ClassLoader.getSystemClassLoader().loadClass(name);
 			} catch (ClassNotFoundException e) {
 			}
+			for (ClassLoader classLoader : activeCodebases.keySet()) {
+				try {
+					return classLoader.loadClass(name);
+				} catch (ClassNotFoundException e) {
+				}
+			}
+			throw new ClassNotFoundException();
+		} finally {
+			mutex.unlock();
 		}
-		throw new ClassNotFoundException();
 	}
 
 	/**
 	 * Gets the set of currently active codebases.
 	 * 
-	 * @return a set of active codebases
+	 * @return a set of active codebasess
 	 */
-	public synchronized Set<URL> getCodebasesSet() {
-		return new HashSet<>(activeCodebases.values());
+	public Set<URL> getCodebasesSet() {
+		mutex.lock();
+		try {
+			return new HashSet<>(activeCodebases.values());
+		} finally {
+			mutex.unlock();
+		}
 	}
 
 	/**
@@ -169,6 +197,11 @@ public final class RMIClassLoader extends ClassLoader {
 	 * currently loaded and used in the Java Virtual Machine.
 	 */
 	public void clearCodebasesSet() {
-		staticCodebases.clear();
+		mutex.lock();
+		try {
+			staticCodebases.clear();
+		} finally {
+			mutex.unlock();
+		}
 	}
 }

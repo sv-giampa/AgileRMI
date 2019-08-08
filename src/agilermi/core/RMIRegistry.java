@@ -40,6 +40,7 @@ import java.util.TreeMap;
 import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -74,6 +75,16 @@ import agilermi.exception.RemoteException;
  *
  */
 public final class RMIRegistry {
+
+	ExecutorService invocationExecutor = Executors.newCachedThreadPool(new ThreadFactory() {
+		@Override
+		public Thread newThread(Runnable task) {
+			Thread th = new Thread(task);
+			th.setDaemon(true);
+			th.setName("RMIRegistry.invocationExecutor");
+			return th;
+		}
+	});
 
 	// executor service used to move network operations on other threads
 	ScheduledExecutorService executorService = Executors
