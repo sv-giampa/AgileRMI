@@ -30,6 +30,7 @@ import java.lang.reflect.Proxy;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.Arrays;
@@ -129,6 +130,8 @@ public final class RMIHandler {
 	private TransmitterThread transmitter = new TransmitterThread();
 
 	private ReceiverThread receiver = new ReceiverThread();
+
+	private long lastUse;
 
 	/**
 	 * Executes the handshake with the remote {@link RMIHandler}. During the
@@ -256,6 +259,7 @@ public final class RMIHandler {
 	 */
 	RMIHandler(Socket socket, RMIRegistry registry, ProtocolEndpointFactory protocolEndpointFactory,
 			boolean connectionStarter) throws IOException {
+		// socket.setSoTimeout(10000);
 		this.socket = socket;
 		this.registry = registry;
 		this.connectionStarter = connectionStarter;
@@ -326,6 +330,7 @@ public final class RMIHandler {
 		if (started)
 			return;
 
+		lastUse = System.currentTimeMillis();
 		started = true;
 		receiver.start();
 		transmitter.start();
@@ -455,7 +460,6 @@ public final class RMIHandler {
 			invocations.clear();
 			messageQueue.clear();
 		}
-
 		registry.removeHandler(this);
 
 		if (signalFault)
@@ -627,6 +631,7 @@ public final class RMIHandler {
 				while (!isInterrupted()) {
 					rmiMessage = null;
 					rmiMessage = messageQueue.take();
+					lastUse = System.currentTimeMillis();
 					rmiMessage.accept(this);
 				}
 			} catch (Exception e) { // something gone wrong, destroy the handler
@@ -745,6 +750,12 @@ public final class RMIHandler {
 					// receive message
 					try {
 						rmiMessage = (RMIMessage) (inputStream.readUnshared());
+						lastUse = System.currentTimeMillis();
+					} catch (SocketTimeoutException e) {
+						long lastUseElapsed = System.currentTimeMillis() - lastUse;
+						if (lastUseElapsed > registry.getLeaseTime())
+							dispose(false);
+						continue;
 					} catch (Exception e) {
 						if (Debug.RMI_HANDLER) {
 							e.printStackTrace();

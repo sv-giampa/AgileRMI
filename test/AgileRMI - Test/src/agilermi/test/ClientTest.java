@@ -16,7 +16,6 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
 import agilermi.authentication.RMIAuthenticator;
-import agilermi.communication.gzip.GzipEndpointFactory;
 import agilermi.configuration.RMIFaultHandler;
 import agilermi.core.RMIHandler;
 import agilermi.core.RMIRegistry;
@@ -67,7 +66,8 @@ class ClientTest {
 		serverRegistry = RMIRegistry.builder()
 				// .setSocketFactories(new DefaultSSLSocketFactory(), new
 				// DefaultSSLServerSocketFactory())
-				.setProtocolEndpointFactory(new GzipEndpointFactory()).setAuthenticator(rMIAuthenticator).build();
+				// .setProtocolEndpointFactory(new GzipEndpointFactory())
+				.setAuthenticator(rMIAuthenticator).build();
 		serverRegistry.exportInterface(TestIF.class);
 
 		// remote objects creation
@@ -84,7 +84,8 @@ class ClientTest {
 		clientRegistry = RMIRegistry.builder()
 				// .setSocketFactories(new DefaultSSLSocketFactory(), new
 				// DefaultSSLServerSocketFactory())
-				.setProtocolEndpointFactory(new GzipEndpointFactory()).build();
+				// .setProtocolEndpointFactory(new GzipEndpointFactory())
+				.build();
 		clientRegistry.setAuthentication("localhost", 3031, "testId", "testPass");
 
 		// attach failure observer to manage connection and I/O errors

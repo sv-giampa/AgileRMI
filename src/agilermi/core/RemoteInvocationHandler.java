@@ -130,25 +130,21 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		StackTraceElement[] localStack = Thread.currentThread().getStackTrace();
 
 		// add remote part of stack trace
-		String thisClassName = this.getClass().getName();
 		for (int i = 0; i < remoteStack.length; i++) {
 			newStackList.add(remoteStack[i]);
-			/*
-			 * String className = remoteStack[i].getClassName();
-			 * 
-			 * if (className.equals(thisClassName)) break;
-			 */
+			String className = remoteStack[i].getClassName();
+			if (className.equals(Skeleton.class.getName()))
+				break;
 		}
 
 		// add RMI stack trace element
 		newStackList.add(new StackTraceElement("=====> Remote Method Invocation ======>", "", "", -1));
 
 		// add local part of stack trace
-		for (int i = 0; i < localStack.length; i++) {
-			/*
-			 * if (localStack[i].getClassName().equals(this.getClass().getName()) ||
-			 * localStack[i].getClassName().contains(".$Proxy")) continue;
-			 */
+		for (int i = 2; i < localStack.length; i++) {
+			if (localStack[i].getClassName().equals(this.getClass().getName())
+					|| localStack[i].getClassName().contains(".$Proxy"))
+				continue;
 			newStackList.add(localStack[i]);
 		}
 
