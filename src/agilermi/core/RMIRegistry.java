@@ -978,21 +978,32 @@ public final class RMIRegistry {
 	 *                               fault handlers}
 	 */
 	public void finalize(boolean signalHandlersFailures) {
-		if (finalized)
-			return;
 		synchronized (lock) {
+			if (finalized)
+				return;
 			finalized = true;
-			disableListener();
-			for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext(); it.remove())
-				for (RMIHandler rMIHandler : handlers.get(it.next()))
-					rMIHandler.dispose(signalHandlersFailures);
+		}
+
+		disableListener();
+
+		synchronized (lock) {
+
+			for (Iterator<InetSocketAddress> it = handlers.keySet().iterator(); it.hasNext();) {
+				Iterator<RMIHandler> hndit = handlers.get(it.next()).iterator();
+				it.remove();
+				while (hndit.hasNext()) {
+					RMIHandler handler = hndit.next();
+					hndit.remove();
+					handler.dispose(signalHandlersFailures);
+				}
+			}
 
 			if (dgc != null)
 				dgc.interrupt();
 			if (localGCInvoker != null)
 				localGCInvoker.interrupt();
-			System.gc();
 		}
+		System.gc();
 	}
 
 	/**
@@ -1145,7 +1156,7 @@ public final class RMIRegistry {
 		} catch (InterruptedException e) {
 			return null;
 		} catch (ExecutionException e) {
-			throw (IOException) e.getCause().fillInStackTrace();
+			throw new IOException(e.getCause());
 		}
 	}
 
