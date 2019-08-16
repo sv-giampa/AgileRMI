@@ -48,13 +48,11 @@ import agilermi.configuration.StubRetriever;
  *
  */
 final class RMIObjectOutputStream extends ObjectOutputStream {
-	private RMIHandler handler;
 	private RMIRegistry rmiRegistry;
 	private Class<?> rootType = null;
 
 	public RMIObjectOutputStream(OutputStream outputStream, RMIHandler handler) throws IOException {
 		super(outputStream);
-		this.handler = handler;
 		this.rmiRegistry = handler.getRMIRegistry();
 		this.enableReplaceObject(true);
 	}

@@ -151,10 +151,6 @@ public final class RMIRegistry {
 	private Set<RMIFaultHandler> rmiFaultHandlers = Collections
 			.newSetFromMap(new WeakHashMap<RMIFaultHandler, Boolean>());
 
-	// enable the stubs to throw a remote exception when invoked after a connection
-	// failure
-	private boolean remoteExceptionEnabled = true;
-
 	// automatically referenced interfaces
 	private Set<Class<?>> remotes = new HashSet<>();
 
