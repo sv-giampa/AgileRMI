@@ -25,13 +25,11 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
-import java.net.InetSocketAddress;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-import agilermi.codemobility.ClassLoaderFactory;
 import agilermi.configuration.RMIFaultHandler;
 import agilermi.configuration.StubRetriever;
 
@@ -52,18 +50,43 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 	private RMIRegistry registry;
 	private RMIHandler rmiHandler;
 	private RMIClassLoader rmiClassLoader;
-	// private Set<URL> remoteCodebases = new HashSet<>();
 	private Map<URL, WeakReference<ClassLoader>> remoteCodebases = new HashMap<>();
 
-	public RMIObjectInputStream(InputStream inputStream, RMIHandler handler, InetSocketAddress address,
-			ClassLoaderFactory classLoaderFactory) throws IOException {
-		super(inputStream);
+	/**
+	 * Initializes an {@link RMIObjectInputStream} over an handler to communicate
+	 * with a remote machine.
+	 * 
+	 * @param handlerInputStream the {@link InputStream} the stubs will be read from.
+	 * @param handler     the {@link RMIHandler} that represents the remote machine.
+	 * @throws IOException if an I/O error occurs
+	 */
+	RMIObjectInputStream(InputStream handlerInputStream, RMIHandler handler) throws IOException {
+		super(handlerInputStream);
 		this.rmiHandler = handler;
 		this.registry = handler.getRMIRegistry();
-		this.remoteAddress = address.getHostString();
-		this.remotePort = address.getPort();
+		this.remoteAddress = handler.getInetSocketAddress().getHostString();
+		this.remotePort = handler.getInetSocketAddress().getPort();
 		this.rmiClassLoader = registry.getRmiClassLoader();
 		this.enableResolveObject(true);
+	}
+
+	/**
+	 * Initializes an {@link RMIObjectInputStream} over the given
+	 * {@link InputStream} with the specified registry. This allows to read
+	 * persisted object stubs providing them the information needed to become
+	 * active.
+	 * 
+	 * @param inputStream the {@link InputStream} the stubs will be read from.
+	 * @param registry    the registry to provide to the persisted stubs.
+	 * @throws IOException if an I/O error occurs
+	 */
+	public RMIObjectInputStream(InputStream inputStream, RMIRegistry registry) throws IOException {
+		super(inputStream);
+		this.registry = registry;
+		this.remoteAddress = "localhost";
+		this.remotePort = 0;
+		this.rmiClassLoader = registry.getRmiClassLoader();
+		this.enableResolveObject(false);
 	}
 
 	public RMIClassLoader getRmiClassLoader() {
@@ -98,14 +121,12 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 		// tries to solve class through the system class-loaders
 		try {
 			return super.resolveClass(desc);
-		} catch (Exception e) {
-		}
+		} catch (Exception e) {}
 
 		// tries to solve class through a currently active codebase
 		try {
 			return rmiClassLoader.findClass(desc.getName());
-		} catch (Exception e) {
-		}
+		} catch (Exception e) {}
 
 		// tries to load class by activating a new codebase
 		for (URL codebase : remoteCodebases.keySet()) {

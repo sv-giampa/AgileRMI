@@ -122,6 +122,7 @@ public final class RMIHandler {
 
 	private boolean connectionStarter;
 
+	// creates a set of weak references to the connected stubs
 	private Set<RemoteInvocationHandler> connectedStubs = Collections
 			.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
 
@@ -162,9 +163,8 @@ public final class RMIHandler {
 		remotePort = inputStream.readInt();
 
 		if (Debug.RMI_HANDLER)
-			System.out
-					.println("[new handler] remoteAddress=" + socket.getInetAddress().getHostAddress()
-							+ ", remotePort=" + remotePort);
+			System.out.println("[new handler] remoteAddress=" + socket.getInetAddress().getHostAddress()
+					+ ", remotePort=" + remotePort);
 
 		if (remotePort != 0)
 			inetSocketAddress = new InetSocketAddress(socket.getInetAddress(), remotePort);
@@ -173,14 +173,16 @@ public final class RMIHandler {
 
 		String[] auth = registry.getAuthentication(inetSocketAddress.getAddress(), inetSocketAddress.getPort());
 
-		if (auth != null) { authIdentifier = auth[0]; authPassphrase = auth[1]; }
+		if (auth != null) {
+			authIdentifier = auth[0];
+			authPassphrase = auth[1];
+		}
 		if (authIdentifier == null)
 			authIdentifier = "";
 		if (authPassphrase == null)
 			authPassphrase = "";
 
-		if (remoteRegistryKey.equals(registry.getRegistryKey()) && socket
-				.getInetAddress().getCanonicalHostName()
+		if (remoteRegistryKey.equals(registry.getRegistryKey()) && socket.getInetAddress().getCanonicalHostName()
 				.equals(InetAddress.getLocalHost().getCanonicalHostName())) {
 			sameRegistryAuthentication = true;
 			outputStream.writeBoolean(true);
@@ -272,16 +274,22 @@ public final class RMIHandler {
 
 		handshake(output, input);
 
-		outputStream = new RMIObjectOutputStream(output, this);
+		outputStream = new RMIObjectOutputStream(output, registry);
 		outputStream.flush(); // flushes ObjectOutputStream header
-		inputStream = new RMIObjectInputStream(input, this, inetSocketAddress, registry.getClassLoaderFactory());
+		inputStream = new RMIObjectInputStream(input, this);
 	}
 
-	void registerStub(RemoteInvocationHandler rih) { connectedStubs.add(rih); }
+	void registerStub(RemoteInvocationHandler rih) {
+		connectedStubs.add(rih);
+	}
 
-	Set<RemoteInvocationHandler> getConnectedStubs() { return connectedStubs; }
+	Set<RemoteInvocationHandler> getConnectedStubs() {
+		return connectedStubs;
+	}
 
-	boolean isConnectionStarter() { return connectionStarter; }
+	boolean isConnectionStarter() {
+		return connectionStarter;
+	}
 
 	/**
 	 * A utility function used by library components to decide how to share stubs
@@ -312,7 +320,9 @@ public final class RMIHandler {
 	 *         connected to this {@link Handler handler} are shareable and can be
 	 *         sent to other machines
 	 */
-	boolean areStubsShareable() { return remotePort > 0; }
+	boolean areStubsShareable() {
+		return remotePort > 0;
+	}
 
 	synchronized void start() {
 		if (started)
@@ -336,14 +346,18 @@ public final class RMIHandler {
 	 * 
 	 * @return the key of the remote RMI registry
 	 */
-	String getRemoteRegistryKey() { return remoteRegistryKey; }
+	String getRemoteRegistryKey() {
+		return remoteRegistryKey;
+	}
 
 	/**
 	 * Gets the registry used by this {@link RMIHandler}
 	 * 
 	 * @return the registry used by this peer
 	 */
-	RMIRegistry getRMIRegistry() { return registry; }
+	RMIRegistry getRMIRegistry() {
+		return registry;
+	}
 
 	/**
 	 * Package-level operation used by stub invocation handlers to put new
@@ -354,8 +368,12 @@ public final class RMIHandler {
 	 */
 	synchronized void putMessage(RMIMessage rmiMessage) throws InterruptedException {
 		if (disposed) {
-			if (rmiMessage instanceof InvocationMessage) { forceInvocationReturn((InvocationMessage) rmiMessage); }
-			if (rmiMessage instanceof RemoteInterfaceMessage) { ((RemoteInterfaceMessage) rmiMessage).signalResult(); }
+			if (rmiMessage instanceof InvocationMessage) {
+				forceInvocationReturn((InvocationMessage) rmiMessage);
+			}
+			if (rmiMessage instanceof RemoteInterfaceMessage) {
+				((RemoteInterfaceMessage) rmiMessage).signalResult();
+			}
 			return;
 		}
 		if (codebasesModification != registry.getRmiClassLoader().getModificationNumber()) {
@@ -407,19 +425,28 @@ public final class RMIHandler {
 				protocolEndpoint.connectionEnd();
 
 			// let the stubs to return
-			for (InvocationMessage handle : invocations.values()) { forceInvocationReturn(handle); }
+			for (InvocationMessage handle : invocations.values()) {
+				forceInvocationReturn(handle);
+			}
 
 			// release all the handle in the handleQueue
 			// synchronized (messageQueue) {
 			for (RMIMessage message : messageQueue) {
-				if (message instanceof InvocationMessage) { forceInvocationReturn((InvocationMessage) message); }
-				if (message instanceof RemoteInterfaceMessage) { ((RemoteInterfaceMessage) message).signalResult(); }
+				if (message instanceof InvocationMessage) {
+					forceInvocationReturn((InvocationMessage) message);
+				}
+				if (message instanceof RemoteInterfaceMessage) {
+					((RemoteInterfaceMessage) message).signalResult();
+				}
 			}
 			// }
 
 			for (Iterator<String> it = references.iterator(); it.hasNext();) {
 				Skeleton sk = registry.getSkeleton(it.next());
-				if (sk != null) { sk.removeAllRefs(this); it.remove(); }
+				if (sk != null) {
+					sk.removeAllRefs(this);
+					it.remove();
+				}
 			}
 
 			socket = null;
@@ -441,7 +468,9 @@ public final class RMIHandler {
 	 * 
 	 * @return the {@link InetSocketAddress} containing remote host address and port
 	 */
-	public InetSocketAddress getInetSocketAddress() { return inetSocketAddress; }
+	public InetSocketAddress getInetSocketAddress() {
+		return inetSocketAddress;
+	}
 
 	/**
 	 * Check if the given object is a stub created by this handler
@@ -489,7 +518,9 @@ public final class RMIHandler {
 	 * 
 	 * @return true if this peer has been disposed, false otherwise
 	 */
-	public boolean isDisposed() { return disposed; }
+	public boolean isDisposed() {
+		return disposed;
+	}
 
 	/**
 	 * Gets a stub for the specified object identifier representing a remote object
@@ -536,9 +567,8 @@ public final class RMIHandler {
 			throw new IllegalArgumentException("No interface has been passed");
 
 		Object stub;
-		stub = Proxy
-				.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
-						new RemoteInvocationHandler(this, objectId));
+		stub = Proxy.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
+				new RemoteInvocationHandler(this, objectId));
 		return stub;
 	}
 
@@ -547,14 +577,18 @@ public final class RMIHandler {
 	 * 
 	 * @return a long value in milliseconds
 	 */
-	public long getDispositionTime() { return dispositionTime; }
+	public long getDispositionTime() {
+		return dispositionTime;
+	}
 
 	/**
 	 * Gets the exception that caused this handler to be disposed.
 	 * 
 	 * @return an Exception
 	 */
-	public Exception getDispositionException() { return dispositionException; }
+	public Exception getDispositionException() {
+		return dispositionException;
+	}
 
 	@Override
 	public int hashCode() {
@@ -574,11 +608,8 @@ public final class RMIHandler {
 
 	@Override
 	public String toString() {
-		return "RMIHandler ["
-				+ "inetSocketAddress=" + inetSocketAddress
-				+ ", disposed=" + disposed
-				+ ", lastUse=" + lastUse
-				+ "]";
+		return "RMIHandler [" + "inetSocketAddress=" + inetSocketAddress + ", disposed=" + disposed + ", lastUse="
+				+ lastUse + "]";
 	}
 
 	/**
@@ -587,7 +618,10 @@ public final class RMIHandler {
 	 * reads new invocations from the handleQueue.
 	 */
 	private class TransmitterThread extends Thread implements RMIMessageHandler {
-		public TransmitterThread() { setName(this.getClass().getName()); setDaemon(true); }
+		public TransmitterThread() {
+			setName(this.getClass().getName());
+			setDaemon(true);
+		}
 
 		@Override
 		public void run() {
@@ -703,7 +737,10 @@ public final class RMIHandler {
 	private class ReceiverThread extends Thread implements RMIMessageHandler {
 		private Map<Long, InvocationTask> activeInvocations = Collections.synchronizedMap(new HashMap<>());
 
-		public ReceiverThread() { setName(this.getClass().getName()); this.setDaemon(true); }
+		public ReceiverThread() {
+			setName(this.getClass().getName());
+			this.setDaemon(true);
+		}
 
 		@Override
 		public void run() {
@@ -721,7 +758,9 @@ public final class RMIHandler {
 							dispose(false);
 						continue;
 					} catch (Exception e) {
-						if (Debug.RMI_HANDLER) { e.printStackTrace(); }
+						if (Debug.RMI_HANDLER) {
+							e.printStackTrace();
+						}
 						ReturnMessage retHandle = new ReturnMessage();
 						retHandle.thrownException = e;
 						putMessage(retHandle);
@@ -733,7 +772,9 @@ public final class RMIHandler {
 					rmiMessage.accept(this);
 				}
 			} catch (Exception e) { // something gone wrong, dispose this handler
-				if (Debug.RMI_HANDLER) { e.printStackTrace(); }
+				if (Debug.RMI_HANDLER) {
+					e.printStackTrace();
+				}
 
 				if (disposed)
 					return;
@@ -762,7 +803,9 @@ public final class RMIHandler {
 
 		@Override
 		public void handle(CodebaseUpdateMessage msg) throws Exception {
-			if (registry.isCodeDownloadingEnabled()) { inputStream.setRemoteCodebases(msg.codebases); }
+			if (registry.isCodeDownloadingEnabled()) {
+				inputStream.setRemoteCodebases(msg.codebases);
+			}
 		}
 
 		@Override
@@ -829,7 +872,10 @@ public final class RMIHandler {
 			public void interrupt() {
 				synchronized (this) {
 					interrupted = true;
-					if (currentThread != null) { currentThread.interrupt(); currentThread = null; }
+					if (currentThread != null) {
+						currentThread.interrupt();
+						currentThread = null;
+					}
 				}
 			}
 
@@ -845,9 +891,8 @@ public final class RMIHandler {
 							currentThread.interrupt();
 					}
 
-					response.returnValue = skeleton
-							.invoke(msg.method, msg.parameterTypes, msg.parameters,
-									remoteRegistryKey, msg.id);
+					response.returnValue = skeleton.invoke(msg.method, msg.parameterTypes, msg.parameters,
+							remoteRegistryKey, msg.id);
 
 					// set invocation return class
 					response.returnClass = method.getReturnType();
@@ -884,9 +929,8 @@ public final class RMIHandler {
 							return;
 						} catch (InterruptedException e) {}
 				else if (response.thrownException != null) {
-					System.err
-							.println("RMI asynchronous method '" + method
-									+ "' (annotated with @RMIAsynch) thrown the following exception.");
+					System.err.println("RMI asynchronous method '" + method
+							+ "' (annotated with @RMIAsynch) thrown the following exception.");
 					response.thrownException.printStackTrace();
 				}
 			}
@@ -907,7 +951,9 @@ public final class RMIHandler {
 
 				// notify the invocation handler that is waiting on it
 				invocation.signalResult();
-			} else if (msg.thrownException != null) { throw (Exception) msg.thrownException; }
+			} else if (msg.thrownException != null) {
+				throw (Exception) msg.thrownException;
+			}
 		}
 
 		@Override

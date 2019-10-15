@@ -31,19 +31,11 @@ import agilermi.core.RMIHandler;
 public class RemoteException extends Exception {
 	private static final long serialVersionUID = 3064594603835597427L;
 
-	public RemoteException() {
-		super("The RMIHandler has been disposed");
-	}
+	public RemoteException() {}
 
-	public RemoteException(String message) {
-		super(message);
-	}
+	public RemoteException(String message) { super(message); }
 
-	public RemoteException(Throwable e) {
-		super(e);
-	}
+	public RemoteException(Throwable e) { super(e); }
 
-	public RemoteException(String message, Throwable e) {
-		super(message, e);
-	}
+	public RemoteException(String message, Throwable e) { super(message, e); }
 }

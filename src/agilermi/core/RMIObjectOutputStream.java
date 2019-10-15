@@ -48,17 +48,17 @@ import agilermi.configuration.StubRetriever;
  *
  */
 final class RMIObjectOutputStream extends ObjectOutputStream {
-	private RMIRegistry rmiRegistry;
+	private RMIRegistry registry;
 	private Class<?> rootType = null;
 
-	public RMIObjectOutputStream(OutputStream outputStream, RMIHandler handler) throws IOException {
+	public RMIObjectOutputStream(OutputStream outputStream, RMIRegistry registry) throws IOException {
 		super(outputStream);
-		this.rmiRegistry = handler.getRMIRegistry();
+		this.registry = registry;
 		this.enableReplaceObject(true);
 	}
 
-	public RMIRegistry getObjectContext() {
-		return rmiRegistry;
+	public RMIRegistry getRegistry() {
+		return registry;
 	}
 
 	public void setRootType(Class<?> rootType) {
@@ -81,7 +81,7 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 					return true;
 
 				Object value = Array.get(obj, i);
-				if ((value != null && rmiRegistry.isRemote(type)))
+				if ((value != null && registry.isRemote(type)))
 					return true;
 			}
 		} else if (obj instanceof Serializable) {
@@ -98,7 +98,7 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 						if (!Modifier.isStatic(modifiers) && !Modifier.isTransient(modifiers)) {
 							field.setAccessible(true);
 							Object value = field.get(obj);
-							if ((value != null && rmiRegistry.isRemote(type)))
+							if ((value != null && registry.isRemote(type)))
 								return true;
 						}
 					}
@@ -127,9 +127,7 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			Object newArray = Array.newInstance(type, len);
 
 			if (type == StubRetriever.class) {
-				for (int i = 0; i < len; i++) {
-					Array.set(newArray, i, null);
-				}
+				for (int i = 0; i < len; i++) { Array.set(newArray, i, null); }
 			} else {
 				for (int i = 0; i < len; i++) {
 					Object value = Array.get(obj, i);
@@ -164,12 +162,10 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 							Object value;
 							if (field.getType() == StubRetriever.class) {
 								value = null;
-								field.set(obj, rmiRegistry.getStubRetriever());
+								field.set(obj, registry.getStubRetriever());
 							} else {
 								value = field.get(obj);
-								if (rmiRegistry.isRemote(field.getType())) {
-									value = remotize(value, field.getType());
-								}
+								if (registry.isRemote(field.getType())) { value = remotize(value, field.getType()); }
 							}
 							field.set(shallowCopy, value);
 							field.setAccessible(accessible);
@@ -253,12 +249,12 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 		}
 
 		// the object is a non-shareable stub or its formal type is remote
-		if (isStub || rmiRegistry.isRemote(formalType)) {
+		if (isStub || registry.isRemote(formalType)) {
 			if (Debug.RMI_OUTPUT_STREAM)
 				System.out.printf("[RMIObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
 						formalType.getName());
 
-			String objectId = rmiRegistry.publish(obj);
+			String objectId = registry.publish(obj);
 			Object stub = Proxy.newProxyInstance(formalType.getClassLoader(), new Class<?>[] { formalType },
 					new ReferenceInvocationHandler(objectId));
 			return stub;
@@ -267,9 +263,9 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 
 		// remote object sent as a Object type (possibly type-erased)
 		if (formalType == Object.class) { // anti-type-erasure
-			List<Class<?>> remoteIfs = rmiRegistry.getRemoteInterfaces(obj.getClass());
+			List<Class<?>> remoteIfs = registry.getRemoteInterfaces(obj.getClass());
 			if (remoteIfs.size() >= 1) {
-				String objectId = rmiRegistry.publish(obj);
+				String objectId = registry.publish(obj);
 
 				Object stub = Proxy.newProxyInstance(remoteIfs.get(0).getClassLoader(),
 						remoteIfs.toArray(new Class<?>[] { remoteIfs.get(0) }),
@@ -284,7 +280,7 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 
 	@Override
 	protected Object replaceObject(Object obj) throws IOException {
-		if (!rmiRegistry.isAutomaticReferencingEnabled()) {
+		if (!registry.isAutomaticReferencingEnabled()) {
 			if (!(obj instanceof Serializable) && obj instanceof Remote) {
 				throw new RuntimeException(String.format("Object {%s} is a remote and non-serializable object, "
 						+ "but the automatic referencing is disabled on the RMI registry. "

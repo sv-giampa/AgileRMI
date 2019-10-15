@@ -25,7 +25,6 @@ import java.lang.reflect.Array;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.net.InetSocketAddress;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -34,6 +33,7 @@ import java.util.Map;
 
 import agilermi.configuration.annotation.RMIAsynch;
 import agilermi.configuration.annotation.RMICached;
+import agilermi.configuration.annotation.RMIRemoteExceptionAlternative;
 import agilermi.configuration.annotation.RMISuppressFaults;
 import agilermi.exception.LocalAuthenticationException;
 import agilermi.exception.RemoteException;
@@ -67,15 +67,12 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 	private void writeObject(ObjectOutputStream out) throws IOException {
 		if (!(out instanceof RMIObjectOutputStream))
-			System.err.println("** WARNING ** in " + getClass().getName() + ".writeObject():\n"
-					+ "\tWe are writing a remote stub into a non-RMI stream!\n"
-					+ "\tWe cannot say what will be read on the input stream of the other side!\n"
-					+ "\tProbably this stub will not be able to establish the connection with its remote counterpart!\n"
-					+ "\tWriting stub to a non-RMI output stream...");
-
-		InetSocketAddress address = handler.getInetSocketAddress();
-		host = address.getHostString();
-		port = address.getPort();
+			System.err
+					.println("** WARNING ** in " + getClass().getName() + ".writeObject():\n"
+							+ "\tYou are writing a remote stub to a non-RMI output stream.\n"
+							+ "\tYou cannot say what will be read on the input stream of the other side!\n"
+							+ "\tProbably this stub will not be able to establish the connection with its remote counterpart!\n"
+							+ "\tWriting stub...");
 		out.defaultWriteObject();
 	}
 
@@ -91,6 +88,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 				host = rmiInput.getRemoteAddress();
 			registry = rmiInput.getRmiRegistry();
 		} else {
+			System.err
+					.println("** WARNING ** in " + getClass().getName() + ".readObject():\n"
+							+ "\tYou are reading a remote stub from stream that is not "
+							+ RMIObjectInputStream.class.getName()
+							+ ".\n"
+							+ "\tProbably this stub will not be able to establish the connection with its remote counterpart!\n"
+							+ "\tReading stub...");
 			registry = RMIRegistry.builder().build();
 		}
 
@@ -160,10 +164,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			if (handler == null || handler.isDisposed())
 				return;
 			try {
-				if (!messageSent) {
-					handler.putMessage(invocation);
-					messageSent = true;
-				}
+				if (!messageSent) { handler.putMessage(invocation); messageSent = true; }
 				if (isInterrupted && !interruptionSent) {
 					handler.putMessage(new InterruptionMessage(invocation.id));
 					interruptionSent = true;
@@ -179,16 +180,17 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			Thread.currentThread().interrupt();
 	}
 
-	String getObjectId() {
-		return objectId;
-	}
+	String getObjectId() { return objectId; }
+
+	String getHost() { return host; }
+
+	int getPort() { return port; }
 
 	RMIHandler getHandler() {
 		if (handler == null)
 			try {
 				findHandler();
-			} catch (Exception e) {
-			}
+			} catch (Exception e) {}
 		return handler;
 	}
 
@@ -201,33 +203,24 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 		try {
 			findHandler();
-		} catch (Exception e) {
-		}
+		} catch (Exception e) {}
 
 	}
 
 	public RemoteInvocationHandler(RMIHandler handler, String objectId) {
 		this.objectId = objectId;
-
 		this.handler = handler;
 		this.registry = handler.getRMIRegistry();
 		this.host = handler.getInetSocketAddress().getHostString();
 		this.port = handler.getInetSocketAddress().getPort();
 		this.remoteRegistryKey = handler.getRemoteRegistryKey();
-
-		try {
-			findHandler();
-		} catch (Exception e) {
-		}
-
 	}
 
 	private void updateLastUse() {
 		ReferenceUseMessage msg = new ReferenceUseMessage(objectId);
 		try {
 			handler.putMessage(msg);
-		} catch (InterruptedException e) {
-		}
+		} catch (InterruptedException e) {}
 	}
 
 	@Override
@@ -235,13 +228,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		boolean isAsynch = method.isAnnotationPresent(RMIAsynch.class) && method.getReturnType() == void.class;
 		boolean isCached = method.isAnnotationPresent(RMICached.class) && method.getParameterTypes().length == 0;
 		boolean suppressFaults = method.isAnnotationPresent(RMISuppressFaults.class);
+		boolean rmiRemoteException = method.isAnnotationPresent(RMIRemoteExceptionAlternative.class);
 
 		if (isCached) {
-			if (cache.containsKey(method)) {
-				RMICache rmiCache = cache.get(method);
-				if (System.currentTimeMillis() < rmiCache.time) {
-					updateLastUse();
-					return rmiCache.result;
+			synchronized (cache) {
+				if (cache.containsKey(method)) {
+					RMICache rmiCache = cache.get(method);
+					if (System.currentTimeMillis() < rmiCache.time) { updateLastUse(); return rmiCache.result; }
 				}
 			}
 		}
@@ -309,10 +302,13 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 					}
 
 					if (Debug.INVOCATION_HANDLERS) {
-						System.out.println(
-								RemoteInvocationHandler.class.getName() + " handler==null? " + (handler == null));
-						System.out.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
-								+ handler.isDisposed());
+						System.out
+								.println(
+										RemoteInvocationHandler.class.getName() + " handler==null? "
+												+ (handler == null));
+						System.out
+								.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
+										+ handler.isDisposed());
 					}
 				} while ((handler == null || handler.isDisposed()) && System.currentTimeMillis() < timeout);
 			} else
@@ -330,21 +326,32 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		} else if (isCached) {
 			RMICached cached = method.getAnnotation(RMICached.class);
 			RMICache rmiCache;
-			if (cache.containsKey(method)) {
-				rmiCache = cache.get(method);
+			synchronized (cache) {
+				if (cache.containsKey(method)) {
+					rmiCache = cache.get(method);
+				} else {
+					rmiCache = new RMICache();
+					cache.put(method, rmiCache);
+				}
 				rmiCache.result = invocation.returnValue;
 				rmiCache.time = System.currentTimeMillis() + cached.timeout();
-			} else {
-				rmiCache = new RMICache();
-				rmiCache.result = invocation.returnValue;
-				rmiCache.time = System.currentTimeMillis() + cached.timeout();
-				cache.put(method, rmiCache);
 			}
 		}
 
 		if (invocation.thrownException != null) {
-			if (!(invocation.thrownException instanceof RemoteException
-					&& (suppressFaults || registry.allInvocationFaultsSuppressed()))) {
+
+			boolean throwException = !(invocation.thrownException instanceof RemoteException &&
+					(suppressFaults || registry.allInvocationFaultsSuppressed()));
+
+			if (throwException) {
+				if (rmiRemoteException) {
+					Class<? extends Exception> exceptionClass = method
+							.getAnnotation(RMIRemoteExceptionAlternative.class).value();
+					Exception e = exceptionClass.newInstance();
+					virtualiseStackTrace(invocation.thrownException);
+					e.initCause(invocation.thrownException);
+					throw e;
+				}
 				virtualiseStackTrace(invocation.thrownException);
 				throw invocation.thrownException;
 			}
@@ -392,9 +399,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 				return Boolean.valueOf(false);
 			else if (Character.class.isAssignableFrom(returnType))
 				return Character.valueOf((char) 0);
-			else if (returnType.isArray()) {
-				return Array.newInstance(returnType.getComponentType(), 0);
-			}
+			else if (returnType.isArray()) { return Array.newInstance(returnType.getComponentType(), 0); }
 		}
 
 		return invocation.returnValue;

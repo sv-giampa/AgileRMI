@@ -2,6 +2,7 @@ package agilermi.example.service;
 
 import agilermi.configuration.Remote;
 import agilermi.configuration.annotation.RMIAsynch;
+import agilermi.configuration.annotation.RMIRemoteExceptionAlternative;
 import agilermi.exception.RemoteException;
 
 public interface Service extends Remote {
@@ -24,5 +25,8 @@ public interface Service extends Remote {
 	void infiniteCycle() throws RemoteException, InterruptedException;
 
 	RetrieverContainerExt compute(RetrieverContainerExt classB) throws RemoteException;
+
+	@RMIRemoteExceptionAlternative(IllegalStateException.class)
+	void anotherRemoteException() throws RemoteException;
 
 }

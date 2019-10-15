@@ -67,4 +67,7 @@ public class ServiceImpl implements Service {
 		return classB;
 	}
 
+	@Override
+	public void anotherRemoteException() throws IllegalStateException, RemoteException { throw new RemoteException(); }
+
 }

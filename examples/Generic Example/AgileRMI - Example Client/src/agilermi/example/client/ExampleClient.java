@@ -53,9 +53,22 @@ public class ExampleClient {
 		demoStubRetriever();
 		demoThreadInterruptionPropagation();
 		demoObserverCallback();
+		demoAnotherRemoteException();
 		demoFaultHandler();
 
 		System.out.println("Example client terminated.");
+	}
+
+	private static void demoAnotherRemoteException() {
+		try {
+			service.anotherRemoteException();
+		} catch (Exception e) {
+			System.out.println("[demoAnotherRemoteException] thrown exception = " + e);
+			e.printStackTrace();
+			try {
+				Thread.sleep(100);
+			} catch (InterruptedException e1) {}
+		}
 	}
 
 	private static void demoSimpleInvocations() throws RemoteException, InterruptedException {

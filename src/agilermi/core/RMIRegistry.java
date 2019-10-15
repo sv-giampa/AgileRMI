@@ -18,6 +18,7 @@
 package agilermi.core;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -196,8 +197,7 @@ public final class RMIRegistry {
 					Thread.sleep(latencyTime);
 					System.gc();
 				}
-			} catch (InterruptedException e) {
-			}
+			} catch (InterruptedException e) {}
 		}
 	}
 
@@ -236,8 +236,7 @@ public final class RMIRegistry {
 					// System.out.println("[DGC] end");
 					Thread.sleep(waitTime);
 				}
-			} catch (InterruptedException e) {
-			}
+			} catch (InterruptedException e) {}
 		}
 	}
 
@@ -285,8 +284,7 @@ public final class RMIRegistry {
 	 */
 	public static class Builder {
 
-		private Builder() {
-		}
+		private Builder() {}
 
 		// multi-connection mode (one connection for each stub)
 		private boolean multiConnectionMode = false;
@@ -934,8 +932,7 @@ public final class RMIRegistry {
 		try {
 			InetAddress address = InetAddress.getByName(host);
 			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
-		}
+		} catch (UnknownHostException e) {}
 		String key = host + ":" + port;
 		String[] auth = new String[] { authId, authPassphrase };
 		authenticationMap.put(key, auth);
@@ -951,8 +948,7 @@ public final class RMIRegistry {
 		try {
 			InetAddress address = InetAddress.getByName(host);
 			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
-		}
+		} catch (UnknownHostException e) {}
 		String key = host + ":" + port;
 		authenticationMap.remove(key);
 	}
@@ -1220,8 +1216,7 @@ public final class RMIRegistry {
 		};
 		try {
 			executorService.submit(callable).get();
-		} catch (InterruptedException e) {
-		} catch (ExecutionException e) {
+		} catch (InterruptedException e) {} catch (ExecutionException e) {
 			throw (IOException) e.getCause();
 		}
 	}
@@ -1249,9 +1244,7 @@ public final class RMIRegistry {
 		};
 		try {
 			executorService.submit(callable).get();
-		} catch (InterruptedException e) {
-		} catch (ExecutionException e) {
-		}
+		} catch (InterruptedException e) {} catch (ExecutionException e) {}
 	}
 
 	/**
@@ -1478,8 +1471,7 @@ public final class RMIRegistry {
 			Class<?> javaRemote = ClassLoader.getSystemClassLoader().loadClass("java.rmi.Remote");
 			if (javaRemote.isAssignableFrom(remoteIf))
 				return true;
-		} catch (ClassNotFoundException e) {
-		}
+		} catch (ClassNotFoundException e) {}
 
 		boolean isMapped;
 		synchronized (lock) {
@@ -1543,6 +1535,54 @@ public final class RMIRegistry {
 			current = current.getSuperclass();
 		}
 		return remoteIfs;
+	}
+
+	/**
+	 * Gets the remote host of the specified RMI stub.
+	 * 
+	 * @param stub the RMI stub
+	 * @return the host address or name
+	 * @throws IllegalArgumentException if the specified object is not an RMI stub
+	 */
+	public String getStubHost(Object stub) {
+		if (Proxy.isProxyClass(stub.getClass())) {
+			InvocationHandler ih = Proxy.getInvocationHandler(stub);
+			if (ih instanceof RemoteInvocationHandler)
+				return ((RemoteInvocationHandler) ih).getHost();
+		}
+		throw new IllegalArgumentException("The specified object is not an RMI stub");
+	}
+
+	/**
+	 * Gets the remote host port of the specified RMI stub.
+	 * 
+	 * @param stub the RMI stub
+	 * @return the host port
+	 * @throws IllegalArgumentException if the specified object is not an RMI stub
+	 */
+	public int getStubPort(Object stub) {
+		if (Proxy.isProxyClass(stub.getClass())) {
+			InvocationHandler ih = Proxy.getInvocationHandler(stub);
+			if (ih instanceof RemoteInvocationHandler)
+				return ((RemoteInvocationHandler) ih).getPort();
+		}
+		throw new IllegalArgumentException("The specified parameter is not an RMI stub");
+	}
+
+	/**
+	 * Gets the object identifier of the specified RMI stub.
+	 * 
+	 * @param stub the RMI stub
+	 * @return the identifier of the remote object
+	 * @throws IllegalArgumentException if the specified object is not an RMI stub
+	 */
+	public String getStubObjectIdentifier(Object stub) {
+		if (Proxy.isProxyClass(stub.getClass())) {
+			InvocationHandler ih = Proxy.getInvocationHandler(stub);
+			if (ih instanceof RemoteInvocationHandler)
+				return ((RemoteInvocationHandler) ih).getObjectId();
+		}
+		throw new IllegalArgumentException("The specified parameter is not an RMI stub");
 	}
 
 	/**
@@ -1658,8 +1698,7 @@ public final class RMIRegistry {
 		try {
 			InetAddress address = InetAddress.getByName(host);
 			host = address.getCanonicalHostName();
-		} catch (UnknownHostException e) {
-		}
+		} catch (UnknownHostException e) {}
 		String key = host + ":" + port;
 		return authenticationMap.get(key);
 	}
