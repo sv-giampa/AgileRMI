@@ -57,13 +57,9 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 		this.enableReplaceObject(true);
 	}
 
-	public RMIRegistry getRegistry() {
-		return registry;
-	}
+	public RMIRegistry getRegistry() { return registry; }
 
-	public void setRootType(Class<?> rootType) {
-		this.rootType = rootType;
-	}
+	public void setRootType(Class<?> rootType) { this.rootType = rootType; }
 
 	/**
 	 * Verify that an object contains values that must be remotized
@@ -111,8 +107,8 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 	}
 
 	/**
-	 * Replaces the values contained in an object that with their remote reference,
-	 * where necessary
+	 * Replaces the values contained in an object with their remote reference, where
+	 * necessary
 	 * 
 	 * @param obj the object whose values must be remotized
 	 * @return a complete new copy of the serializable object
@@ -140,18 +136,15 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			boolean accessible = false;
 			try {
 				Object shallowCopy = null;
-				Constructor<?> defaultConstructor = objClass.getConstructor();
-				if (defaultConstructor != null) {
-					accessible = defaultConstructor.isAccessible();
-					defaultConstructor.setAccessible(true);
-				}
+				Constructor<?> defaultConstructor = objClass.getDeclaredConstructor();
+				defaultConstructor.setAccessible(true);
 				try {
 					shallowCopy = defaultConstructor.newInstance();
+				} catch (Exception e) {
+					throw new InvocationTargetException(e);
 				} finally {
-					if (defaultConstructor != null)
-						defaultConstructor.setAccessible(accessible);
+					defaultConstructor.setAccessible(false);
 				}
-
 				do {
 					Field[] fields = objClass.getDeclaredFields();
 					for (Field field : fields) {
@@ -174,20 +167,17 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 				} while ((objClass = objClass.getSuperclass()) != null);
 				return shallowCopy;
 			} catch (InvocationTargetException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
-
 			} catch (IllegalAccessException e) {
 				throw new WriteAbortedException(
 						"No-arg constructor is not accessible in the class " + objClass.getName(), e);
 			} catch (SecurityException e) {
 				throw new WriteAbortedException("SecurityException has been thrown", e);
-			} catch (NoSuchMethodException e) {
-				throw new WriteAbortedException("No-arg constructor not present in the class " + objClass.getName(), e);
-			} catch (InstantiationException e) {
-				e.printStackTrace();
 			} catch (IllegalArgumentException e) {
 				e.printStackTrace();
+			} catch (NoSuchMethodException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
 			}
 		}
 		return obj;
@@ -251,11 +241,14 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 		// the object is a non-shareable stub or its formal type is remote
 		if (isStub || registry.isRemote(formalType)) {
 			if (Debug.RMI_OUTPUT_STREAM)
-				System.out.printf("[RMIObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
-						formalType.getName());
+				System.out
+						.printf("[RMIObjectOutputStream] Remotizing object=%s, class=%s\n", obj,
+								formalType.getName());
 
 			String objectId = registry.publish(obj);
-			Object stub = Proxy.newProxyInstance(formalType.getClassLoader(), new Class<?>[] { formalType },
+			Object stub = Proxy.newProxyInstance(formalType.getClassLoader(), new Class<?>[] {
+					formalType
+			},
 					new ReferenceInvocationHandler(objectId));
 			return stub;
 
@@ -267,9 +260,12 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 			if (remoteIfs.size() >= 1) {
 				String objectId = registry.publish(obj);
 
-				Object stub = Proxy.newProxyInstance(remoteIfs.get(0).getClassLoader(),
-						remoteIfs.toArray(new Class<?>[] { remoteIfs.get(0) }),
-						new ReferenceInvocationHandler(objectId));
+				Object stub = Proxy
+						.newProxyInstance(remoteIfs.get(0).getClassLoader(),
+								remoteIfs.toArray(new Class<?>[] {
+										remoteIfs.get(0)
+								}),
+								new ReferenceInvocationHandler(objectId));
 				return stub;
 			}
 		}
@@ -282,9 +278,10 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 	protected Object replaceObject(Object obj) throws IOException {
 		if (!registry.isAutomaticReferencingEnabled()) {
 			if (!(obj instanceof Serializable) && obj instanceof Remote) {
-				throw new RuntimeException(String.format("Object {%s} is a remote and non-serializable object, "
-						+ "but the automatic referencing is disabled on the RMI registry. "
-						+ "So it cannot be sent to the remote machine.", obj));
+				throw new RuntimeException(String
+						.format("Object {%s} is a remote and non-serializable object, "
+								+ "but the automatic referencing is disabled on the RMI registry. "
+								+ "So it cannot be sent to the remote machine.", obj));
 			}
 			return obj;
 		}

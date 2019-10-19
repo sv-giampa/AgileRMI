@@ -1415,21 +1415,37 @@ public final class RMIRegistry {
 	}
 
 	/**
+	 * Exports the specified interfaces as remote. This method calls the
+	 * {@link #exportInterface(Class)} method for each specified interface.
+	 * 
+	 * @param interfaces the interfaces to export
+	 * @return this registry
+	 * @see #exportInterface(Class)
+	 */
+	public RMIRegistry exportInterfaces(Class<?>... interfaces) {
+		for (Class<?> cls : interfaces)
+			exportInterface(cls);
+		return this;
+	}
+
+	/**
 	 * Marks an interface to automatically create remote references for objects that
 	 * are sent as arguments for an invocation or as return values. The objects are
 	 * automatically published on this registry when the related parameter of the
 	 * stub method has a type that matches with the marked interface
 	 * 
 	 * @param remoteIf the interface to mark
+	 * @return this registry
 	 */
-	public void exportInterface(Class<?> remoteIf) {
+	public RMIRegistry exportInterface(Class<?> remoteIf) {
 		synchronized (lock) {
 			if (remoteIf == Remote.class)
 				throw new IllegalArgumentException("agilermi.Remote interface cannot be exported!");
 			if (!remoteIf.isInterface())
-				throw new IllegalArgumentException("the specified class is not an interface");
+				throw new IllegalArgumentException("class " + remoteIf.getCanonicalName() + " is not an interface");
 			remotes.add(remoteIf);
 		}
+		return this;
 	}
 
 	/**
