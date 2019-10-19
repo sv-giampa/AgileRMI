@@ -25,6 +25,7 @@ import java.lang.reflect.Array;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -228,7 +229,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		boolean isAsynch = method.isAnnotationPresent(RMIAsynch.class) && method.getReturnType() == void.class;
 		boolean isCached = method.isAnnotationPresent(RMICached.class) && method.getParameterTypes().length == 0;
 		boolean suppressFaults = method.isAnnotationPresent(RMISuppressFaults.class);
-		boolean rmiRemoteException = method.isAnnotationPresent(RMIRemoteExceptionAlternative.class);
+		boolean remoteExceptionReplace = method.isAnnotationPresent(RMIRemoteExceptionAlternative.class);
 
 		if (isCached) {
 			synchronized (cache) {
@@ -339,22 +340,47 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		if (invocation.thrownException != null) {
+			virtualiseStackTrace(invocation.thrownException);
 
-			boolean throwException = !(invocation.thrownException instanceof RemoteException &&
-					(suppressFaults || registry.allInvocationFaultsSuppressed()));
+			boolean throwRemoteException = invocation.thrownException instanceof RemoteException;
 
-			if (throwException) {
-				if (rmiRemoteException) {
-					Class<? extends Exception> exceptionClass = method
-							.getAnnotation(RMIRemoteExceptionAlternative.class).value();
-					Exception e = exceptionClass.newInstance();
-					virtualiseStackTrace(invocation.thrownException);
-					e.initCause(invocation.thrownException);
-					throw e;
-				}
-				virtualiseStackTrace(invocation.thrownException);
+			if (throwRemoteException) {
+				if (!(suppressFaults || registry.allInvocationFaultsSuppressed())) {
+					if (remoteExceptionReplace || registry.getRemoteExceptionReplace() != null) {
+						Class<? extends Exception> exceptionClass = (remoteExceptionReplace)
+								? method.getAnnotation(RMIRemoteExceptionAlternative.class).value()
+								: registry.getRemoteExceptionReplace();
+
+						Exception e = exceptionClass.newInstance();
+						e.initCause(invocation.thrownException);
+						invocation.thrownException = e;
+					} else if (!Arrays.asList(method.getExceptionTypes()).contains(RemoteException.class)) {
+						Exception e = RuntimeException.class.newInstance();
+						e.initCause(invocation.thrownException);
+						invocation.thrownException = e;
+					}
+					throw invocation.thrownException;
+				} // else is suppressed: throws nothing
+			} else {
 				throw invocation.thrownException;
 			}
+
+//			boolean throwException = !(invocation.thrownException instanceof RemoteException &&
+//					(suppressFaults || registry.allInvocationFaultsSuppressed()));
+//
+//			if (throwException) {
+//				if (rmiRemoteException) {
+//					Class<? extends Exception> exceptionClass = method
+//							.getAnnotation(RMIRemoteExceptionAlternative.class).value();
+//					Exception e = exceptionClass.newInstance();
+//					virtualiseStackTrace(invocation.thrownException);
+//					e.initCause(invocation.thrownException);
+//					throw e;
+//				}
+//				virtualiseStackTrace(invocation.thrownException);
+//				throw invocation.thrownException;
+//			}
+
 		} else if (hashCodeCall) {
 			// cache hashCode for next non-deliverable invocations
 			hashCode = (Integer) invocation.returnValue;

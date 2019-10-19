@@ -19,11 +19,19 @@ package agilermi.exception;
 
 import java.io.IOException;
 
+/**
+ * Exception thrown on the skeleton side, when the remote invoker cannot be
+ * authenticated on the machine.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 public class LocalAuthenticationException extends IOException {
 
 	private static final long serialVersionUID = 5828990096774080908L;
 
-	public LocalAuthenticationException() {
-		super("the remote user cannot be authenticated on this machine");
-	}
+	/**
+	 * Constructs a new {@link LocalAuthenticationException}.
+	 */
+	public LocalAuthenticationException() { super("the remote invoker cannot be authenticated on this machine"); }
 }

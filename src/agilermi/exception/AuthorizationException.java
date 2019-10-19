@@ -17,10 +17,20 @@
 
 package agilermi.exception;
 
+/**
+ * Exception thrown when the invoker is not authorized to invoke a remote
+ * method.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 public class AuthorizationException extends RemoteException {
 
 	private static final long serialVersionUID = 8881356199230680956L;
 
+	/**
+	 * Constructs a new {@link AuthorizationException}
+	 */
 	public AuthorizationException() {
 		super("the requested invocation has not been authorized for the currently authenticated user");
 	}

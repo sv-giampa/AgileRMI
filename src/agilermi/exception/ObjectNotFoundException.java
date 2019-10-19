@@ -17,11 +17,21 @@
 
 package agilermi.exception;
 
+/**
+ * Exception thrown when the remote object cannot be found during a remote
+ * method invocation.
+ * 
+ * @author Salvatore Giampa'
+ *
+ */
 public class ObjectNotFoundException extends RemoteException {
 
 	private static final long serialVersionUID = 5721096680781352174L;
 
-	public ObjectNotFoundException(String objectId) {
-		super(objectId);
-	}
+	/**
+	 * Constructs a new {@link ObjectNotFoundException}.
+	 * 
+	 * @param objectId the id of the remote object that cannot be found.
+	 */
+	public ObjectNotFoundException(String objectId) { super(objectId); }
 }
