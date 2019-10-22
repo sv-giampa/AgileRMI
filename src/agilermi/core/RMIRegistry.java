@@ -22,6 +22,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.MalformedURLException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
@@ -553,6 +554,22 @@ public final class RMIRegistry {
 		}
 
 		/**
+		 * Utility method to add code-bases at building time. Code-bases can be added
+		 * and removed after the registry construction, too.
+		 * 
+		 * @param urls the URLs of the code-bases
+		 * @return this builder
+		 * @see #addCodebase(URL)
+		 */
+		public Builder addCodebases(Iterable<URL> urls) {
+			if (urls == null)
+				return this;
+			for (URL url : urls)
+				codebases.add(url);
+			return this;
+		}
+
+		/**
 		 * Utility method to add a codebase at building time. Codebases can be added and
 		 * removed after the registry construction, too.
 		 * 
@@ -573,11 +590,25 @@ public final class RMIRegistry {
 		 * @return this builder
 		 * @see #addCodebase(URL)
 		 */
-		public Builder addCodebases(Iterable<URL> urls) {
+		public Builder addCodebases(URL... urls) {
 			if (urls == null)
 				return this;
 			for (URL url : urls)
 				codebases.add(url);
+			return this;
+		}
+
+		/**
+		 * Utility method to add a codebase at building time. Codebases can be added and
+		 * removed after the registry construction, too.
+		 * 
+		 * @param url the URL to the codebase
+		 * @return this builder
+		 * @throws MalformedURLException if the specified URL is malformed
+		 * @see #addCodebase(URL)
+		 */
+		public Builder addCodebase(String url) throws MalformedURLException {
+			codebases.add(new URL(url));
 			return this;
 		}
 
@@ -587,13 +618,14 @@ public final class RMIRegistry {
 		 * 
 		 * @param urls the URLs of the code-bases
 		 * @return this builder
+		 * @throws MalformedURLException if any of the specified URLs is malformed
 		 * @see #addCodebase(URL)
 		 */
-		public Builder addCodebases(URL... urls) {
+		public Builder addCodebases(String... urls) throws MalformedURLException {
 			if (urls == null)
 				return this;
-			for (URL url : urls)
-				codebases.add(url);
+			for (String url : urls)
+				codebases.add(new URL(url));
 			return this;
 		}
 
@@ -905,6 +937,37 @@ public final class RMIRegistry {
 		if (url == null)
 			return;
 		getRmiClassLoader().addCodebase(url);
+	}
+
+	/**
+	 * Add new static codebases that will be sent to the other machines.
+	 * 
+	 * @see #addCodebase(URL)
+	 * @param urls the codebases to add
+	 * @throws MalformedURLException if any of the specified URLs is malformed
+	 */
+	public void addCodebases(String... urls) throws MalformedURLException {
+		if (urls == null)
+			return;
+		for (String url : urls)
+			getRmiClassLoader().addCodebase(new URL(url));
+	}
+
+	/**
+	 * Add a new static codebase that will be sent to the other machines.<br>
+	 * <br>
+	 * A static codebase is constantly active and it is supposed its classes are
+	 * always used and available in the current RMI node. It is always propagated to
+	 * other RMI nodes to be ready to load it if a class from it is sent over the
+	 * stream.
+	 * 
+	 * @param url the codebase to add
+	 * @throws MalformedURLException if the specified URL is malformed
+	 */
+	public void addCodebase(String url) throws MalformedURLException {
+		if (url == null)
+			return;
+		getRmiClassLoader().addCodebase(new URL(url));
 	}
 
 	/**
