@@ -1,5 +1,7 @@
 package agilermi.example.service;
 
+import java.util.List;
+
 import agilermi.configuration.Remote;
 import agilermi.configuration.annotation.RMIAsynch;
 import agilermi.configuration.annotation.RMIRemoteExceptionAlternative;
@@ -28,5 +30,7 @@ public interface Service extends Remote {
 
 	@RMIRemoteExceptionAlternative(IllegalStateException.class)
 	void anotherRemoteException() throws RemoteException;
+
+	List<Service> listOfRemoteObjects() throws RemoteException;
 
 }

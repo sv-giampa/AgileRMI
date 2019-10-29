@@ -48,6 +48,7 @@ public class ExampleClient {
 		System.out.println("Example client started.");
 
 		// do demonstrations
+		demoListOfRemoteObjects();
 		demoSimpleInvocations();
 		demoStubAndEquals();
 		demoStubRetriever();
@@ -132,6 +133,7 @@ public class ExampleClient {
 		// infinteCycle() method
 		th.interrupt();
 		System.out.println("[demoThreadInterruptionPropagation] infinite cycle interrupted.");
+		Thread.sleep(100);
 	}
 
 	private static void demoObserverCallback() throws RemoteException, InterruptedException {
@@ -174,6 +176,12 @@ public class ExampleClient {
 		System.out.println(message);
 		service.printlnOnServer(message);
 		Thread.sleep(8000);
+	}
+
+	private static void demoListOfRemoteObjects() throws RemoteException {
+		System.out.println("[demoListOfRemoteObjects] start");
+		service.listOfRemoteObjects();
+		System.out.println("[demoListOfRemoteObjects] ok");
 	}
 
 }

@@ -36,10 +36,10 @@ import agilermi.configuration.StubRetriever;
 /**
  * This class extends the standard {@link ObjectInputStream} and it gives an RMI
  * context to the deserialized {@link RemoteInvocationHandler} instances. This
- * class is the left ventricle of the heart of the deep remote referencing
- * mechanism, that replaces all the remote object references with their remote
- * stub, when they are sent on the network. Its counterpart is the
- * {@link RMIObjectInputStream} class.
+ * class allows to implement of the automatic remote referencing mechanism, that
+ * replaces all the remote object references with their remote stubs, when they
+ * are sent on the network. Its counterpart is the {@link RMIObjectInputStream}
+ * class.
  * 
  * @author Salvatore Giampa'
  *
@@ -56,8 +56,10 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 	 * Initializes an {@link RMIObjectInputStream} over an handler to communicate
 	 * with a remote machine.
 	 * 
-	 * @param handlerInputStream the {@link InputStream} the stubs will be read from.
-	 * @param handler     the {@link RMIHandler} that represents the remote machine.
+	 * @param handlerInputStream the {@link InputStream} the stubs will be read
+	 *                           from.
+	 * @param handler            the {@link RMIHandler} that represents the remote
+	 *                           machine.
 	 * @throws IOException if an I/O error occurs
 	 */
 	RMIObjectInputStream(InputStream handlerInputStream, RMIHandler handler) throws IOException {
@@ -115,9 +117,7 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 
 	@Override
 	protected synchronized Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
-		if (desc.getName().equals(StubRetriever.class.getName())) {
-			return StubRetriever.class;
-		}
+		if (desc.getName().equals(StubRetriever.class.getName())) { return StubRetriever.class; }
 		// tries to solve class through the system class-loaders
 		try {
 			return super.resolveClass(desc);
@@ -147,8 +147,9 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 				return cls;
 			} catch (Exception e) {
 				if (Debug.RMI_INPUT_STREAM)
-					System.out.printf("Codebase %s cannot be used to load class %s\n%s\n", codebase, desc.getName(),
-							e.toString());
+					System.out
+							.printf("Codebase %s cannot be used to load class %s\n%s\n", codebase, desc.getName(),
+									e.toString());
 			}
 		}
 		try {
@@ -156,36 +157,6 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 		} catch (ClassNotFoundException e) {
 			throw new ClassNotFoundException(
 					"No codebase can be used to load the class. Check the codebase settings on the registry.");
-		}
-	}
-
-	private void replaceFields(Object obj) throws IOException {
-		Class<?> cls = obj.getClass();
-		try {
-			do {
-				for (Field field : cls.getDeclaredFields()) {
-					if (field.getType() == StubRetriever.class) {
-						boolean accessible = field.isAccessible();
-						field.setAccessible(true);
-						field.set(obj, registry.getStubRetriever());
-						field.setAccessible(accessible);
-					}
-					if (field.getType() == RMIFaultHandler.class) {
-						boolean accessible = field.isAccessible();
-						field.setAccessible(true);
-						RMIFaultHandler faultHandler = (RMIFaultHandler) field.get(obj);
-						if (faultHandler != null)
-							registry.attachFaultHandler(faultHandler);
-						field.setAccessible(accessible);
-					}
-				}
-			} while ((cls = cls.getSuperclass()) != null);
-		} catch (IllegalArgumentException e) {
-			e.printStackTrace();
-			throw new IOException(e);
-		} catch (IllegalAccessException e) {
-			e.printStackTrace();
-			throw new IOException(e);
 		}
 	}
 
@@ -217,6 +188,36 @@ public final class RMIObjectInputStream extends ObjectInputStream {
 
 		replaceFields(obj);
 		return obj;
+	}
+
+	private void replaceFields(Object obj) throws IOException {
+		Class<?> cls = obj.getClass();
+		try {
+			do {
+				for (Field field : cls.getDeclaredFields()) {
+					if (field.getType() == StubRetriever.class) {
+						boolean accessible = field.isAccessible();
+						field.setAccessible(true);
+						field.set(obj, registry.getStubRetriever());
+						field.setAccessible(accessible);
+					}
+					if (field.getType() == RMIFaultHandler.class) {
+						boolean accessible = field.isAccessible();
+						field.setAccessible(true);
+						RMIFaultHandler faultHandler = (RMIFaultHandler) field.get(obj);
+						if (faultHandler != null)
+							registry.attachFaultHandler(faultHandler);
+						field.setAccessible(accessible);
+					}
+				}
+			} while ((cls = cls.getSuperclass()) != null);
+		} catch (IllegalArgumentException e) {
+			e.printStackTrace();
+			throw new IOException(e);
+		} catch (IllegalAccessException e) {
+			e.printStackTrace();
+			throw new IOException(e);
+		}
 	}
 
 	@Override

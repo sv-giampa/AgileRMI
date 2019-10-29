@@ -2,6 +2,8 @@ package agilermi.example.server;
 
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Set;
 
 import agilermi.example.service.RetrieverContainerExt;
@@ -16,10 +18,14 @@ public class ServiceImpl implements Service {
 	private Set<ServiceObserver> observers = Collections.synchronizedSet(new HashSet<>());
 
 	@Override
-	public int square(int x) throws RemoteException { return x * x; }
+	public int square(int x) throws RemoteException {
+		return x * x;
+	}
 
 	@Override
-	public double add(double x, double y) throws RemoteException { return x + y; }
+	public double add(double x, double y) throws RemoteException {
+		return x + y;
+	}
 
 	@Override
 	public void printlnOnServer(String message) throws RemoteException {
@@ -43,13 +49,19 @@ public class ServiceImpl implements Service {
 	}
 
 	@Override
-	public void attachObserver(ServiceObserver o) throws RemoteException { observers.add(o); }
+	public void attachObserver(ServiceObserver o) throws RemoteException {
+		observers.add(o);
+	}
 
 	@Override
-	public void detachObserver(ServiceObserver o) throws RemoteException { observers.remove(o); }
+	public void detachObserver(ServiceObserver o) throws RemoteException {
+		observers.remove(o);
+	}
 
 	@Override
-	public Service getThis() throws RemoteException { return this; }
+	public Service getThis() throws RemoteException {
+		return this;
+	}
 
 	@Override
 	public boolean equals(Object obj) {
@@ -58,7 +70,9 @@ public class ServiceImpl implements Service {
 	}
 
 	@Override
-	public void infiniteCycle() throws RemoteException, InterruptedException { while (true) { Thread.sleep(1000); } }
+	public void infiniteCycle() throws RemoteException, InterruptedException {
+		while (true) { Thread.sleep(1000); }
+	}
 
 	@Override
 	public RetrieverContainerExt compute(RetrieverContainerExt classB) throws RemoteException {
@@ -68,6 +82,16 @@ public class ServiceImpl implements Service {
 	}
 
 	@Override
-	public void anotherRemoteException() throws IllegalStateException, RemoteException { throw new RemoteException(); }
+	public void anotherRemoteException() throws IllegalStateException, RemoteException {
+		throw new RemoteException();
+	}
+
+	@Override
+	public List<Service> listOfRemoteObjects() throws RemoteException {
+		List<Service> list = new LinkedList<Service>();
+		list.add(this);
+		list.add(this);
+		return list;
+	}
 
 }
