@@ -22,6 +22,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.Serializable;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.List;
 
@@ -71,6 +72,15 @@ final class RMIObjectOutputStream extends ObjectOutputStream {
 				}
 				return obj;
 			} else {
+				if (Proxy.isProxyClass(obj.getClass())) {
+					InvocationHandler ih = Proxy.getInvocationHandler(obj);
+					if (ih instanceof RemoteInvocationHandler) {
+						RemoteInvocationHandler rih = (RemoteInvocationHandler) ih;
+						RMIHandler handler = rih.getHandler();
+						if (handler != null && handler.areStubsShareable())
+							return obj;
+					}
+				}
 				String objectId = registry.publish(obj);
 				return Proxy
 						.newProxyInstance(remoteIfs.get(0).getClassLoader(),
