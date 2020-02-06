@@ -61,8 +61,7 @@ public final class BasicCodeServer {
 	/**
 	 * Creates the server
 	 */
-	public BasicCodeServer() {
-	}
+	public BasicCodeServer() {}
 
 	public BasicCodeServer setCodeDirectory(String codeDirectory) {
 		this.codeDirectory = codeDirectory;
@@ -117,7 +116,8 @@ public final class BasicCodeServer {
 
 		public Listener(ServerSocket serverSocket, boolean daemon) {
 			this.serverSocket = serverSocket;
-			this.setName(this.getClass().getName());
+			this.setName(this.getClass()
+					.getName());
 			this.setDaemon(daemon);
 			this.start();
 		}
@@ -128,8 +128,7 @@ public final class BasicCodeServer {
 				while (!isInterrupted())
 					try {
 						new Handler(serverSocket.accept());
-					} catch (SocketTimeoutException e) {
-					}
+					} catch (SocketTimeoutException e) {}
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -141,7 +140,8 @@ public final class BasicCodeServer {
 
 		public Handler(Socket socket) {
 			this.socket = socket;
-			this.setName(this.getClass().getName());
+			this.setName(this.getClass()
+					.getName());
 			this.setDaemon(true);
 			this.start();
 		}
@@ -165,7 +165,8 @@ public final class BasicCodeServer {
 
 				BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
 				try {
-					File file = Paths.get(codeDirectory, path).toFile();
+					File file = Paths.get(codeDirectory, path)
+							.toFile();
 					if (!file.exists()) {
 						throw new InvalidPathException(file.getPath(), "File does not exist");
 					}
@@ -212,8 +213,7 @@ public final class BasicCodeServer {
 					socket.close();
 					return;
 				}
-			} catch (IOException e) {
-			}
+			} catch (IOException e) {}
 		}
 	}
 

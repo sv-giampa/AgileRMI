@@ -19,6 +19,7 @@ package agilermi.core;
 
 import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -59,6 +60,10 @@ import agilermi.communication.ProtocolEndpointFactory;
 import agilermi.configuration.RMIFaultHandler;
 import agilermi.configuration.Remote;
 import agilermi.configuration.StubRetriever;
+import agilermi.configuration.annotation.RMIAsynch;
+import agilermi.configuration.annotation.RMICached;
+import agilermi.configuration.annotation.RMIRemoteExceptionAlternative;
+import agilermi.configuration.annotation.RMISuppressFaults;
 import agilermi.exception.RemoteException;
 
 /**
@@ -182,6 +187,239 @@ public final class RMIRegistry {
 	private LocalGCInvoker localGCInvoker = new LocalGCInvoker();
 
 	private Class<Exception> remoteExceptionReplace = null;
+
+	private MethodAnnotationRegistry methodAnnotationRegistry = new MethodAnnotationRegistry();
+
+	/**
+	 * The method register marks remote methods to be executed according the
+	 * preferred invocation policies. For example, it allows to mark a method to be
+	 * invoked asynchronously.
+	 * 
+	 * @author Salvatore Giampa'
+	 *
+	 */
+	public static class MethodAnnotationRegistry {
+
+		// only RMIRegistry can instantiate this class
+		private MethodAnnotationRegistry() {}
+
+		// registry of all methods that have invocation faults suppressed
+		private Map<Method, Boolean> suppressedInvocationFaults = new HashMap<>();
+
+		// registry of all asynchronous methods
+		private Map<Method, Boolean> asynchMethods = new HashMap<>();
+
+		// registry of all cached methods: key=method, value=cache-timeout
+		private Map<Method, Integer> cachedMethods = new HashMap<>();
+
+		// registry of all methods that throws an alternative exception in place of
+		// RemoteException: key=method, value=alternative-exception
+		private Map<Method, Class<? extends Exception>> alternativeRemoteExceptions = new HashMap<>();
+
+		/**
+		 * Returns the asynchronous status of a remote method.<br>
+		 * See {@link #setMethodAsynch(Method, boolean)} for more details.
+		 * 
+		 * @param method the remote method
+		 * @return true if the method is flagged as asynchronous AND its return type is
+		 *         <code>void</code>.
+		 * @see #setMethodAsynch(Method, boolean)
+		 * @see #resetMethodAsynch(Method)
+		 * @see RMIAsynch
+		 */
+		public boolean isMethodAsynch(Method method) {
+			if (method.getReturnType() != void.class)
+				return false;
+			if (asynchMethods.containsKey(method))
+				return asynchMethods.get(method);
+			if (method.isAnnotationPresent(RMIAsynch.class))
+				return true;
+			return false;
+		}
+
+		/**
+		 * Flags a method as asynchronous or not. An asynchronous method, when called on
+		 * an RMI stub, don't wait for remote execution end. A method can be flagged as
+		 * asynchronous if and only if its return type is <code>void</code>.<br>
+		 * <br>
+		 * Setting a method as asynchronous at runtime through this method is equivalent
+		 * to annotate the same method with the {@link RMIAsynch} annotation at
+		 * compilation time.
+		 * 
+		 * @param method the remote method
+		 * @param set    true if the method should be asynchronous, false otherwise.
+		 * @see #isMethodAsynch(Method)
+		 * @see #resetMethodAsynch(Method)
+		 * @see RMIAsynch
+		 */
+		public void setMethodAsynch(Method method, boolean set) {
+			asynchMethods.put(method, set);
+		}
+
+		/**
+		 * Resets the asynchronous status of a method, that means: if the method is
+		 * annotated with {@link RMIAsynch} annotation, it is set as asynchronous, as
+		 * synchronous otherwise.
+		 * 
+		 * @param method the remote method
+		 * @see #isMethodAsynch(Method)
+		 * @see #setMethodAsynch(Method, boolean)
+		 * @see RMIAsynch
+		 */
+		public void resetMethodAsynch(Method method) {
+			asynchMethods.remove(method);
+		}
+
+		/**
+		 * Gets the fault suppressing flag of a method.
+		 * 
+		 * @param method the remote method
+		 * @return true if remote invocation faults are suppressed for the specified
+		 *         method, false otherwise
+		 * @see RMISuppressFaults
+		 * @see #setMethodRemoteFaultsSuppression(Method, boolean)
+		 * @see #resetMethodRemoteFaultsSuppression(Method)
+		 */
+		public boolean isMethodSuppressingFaults(Method method) {
+			if (suppressedInvocationFaults.containsKey(method))
+				return suppressedInvocationFaults.get(method);
+			if (method.isAnnotationPresent(RMISuppressFaults.class))
+				return true;
+			return false;
+		}
+
+		/**
+		 * Flags the specified method to suppress the remote invocation faults. If a
+		 * method is flagged for remote invocation faults, it only returns default
+		 * values, without throwing exception, when a remote invocation fault
+		 * happens.<br>
+		 * See {@link RMISuppressFaults} for more details.
+		 * 
+		 * @param method the remote method
+		 * @param set    true if the method must suppress remote invocation faults,
+		 *               false otherwise
+		 * @see RMISuppressFaults
+		 * @see #isMethodSuppressingFaults(Method)
+		 * @see #resetMethodRemoteFaultsSuppression(Method)
+		 */
+		public void setMethodRemoteFaultsSuppression(Method method, boolean set) {
+			suppressedInvocationFaults.put(method, set);
+		}
+
+		/**
+		 * Resets the remote invocation faults suppression flag of the specified method.
+		 * If the method is annotated with {@link RMISuppressFaults}, the suppression
+		 * will be activated, deactivated otherwise.
+		 * 
+		 * @param method the remote method
+		 * @see RMISuppressFaults
+		 * @see #setMethodRemoteFaultsSuppression(Method, boolean)
+		 * @see #isMethodSuppressingFaults(Method)
+		 */
+		public void resetMethodRemoteFaultsSuppression(Method method) {
+			suppressedInvocationFaults.remove(method);
+		}
+
+		/**
+		 * Gets the caching timeout of the specified method.
+		 * 
+		 * @param method the remote method
+		 * @return the cache timeout in milliseconds
+		 * @see RMICached
+		 * @see #setMethodCached(Method, int)
+		 * @see #resetMethodCachedDefault(Method)
+		 */
+		public int getMethodCacheTimeout(Method method) {
+			if (method.getParameterCount() > 0)
+				return 0;
+			Integer cacheTimeout = cachedMethods.get(method);
+			if (cacheTimeout == null && method.isAnnotationPresent(RMICached.class))
+				cacheTimeout = method.getAnnotation(RMICached.class).timeout();
+			if (cacheTimeout == null)
+				return 0;
+			return cacheTimeout;
+		}
+
+		/**
+		 * Sets the cache timeout for the specified method.<br>
+		 * See {@link RMICached} for more details.
+		 * 
+		 * @param method       the remote method
+		 * @param cacheTimeout the cache timeout in milliseconds
+		 * @see RMICached
+		 * @see #getMethodCacheTimeout(Method)
+		 * @see #resetMethodCachedDefault(Method)
+		 */
+		public void setMethodCached(Method method, int cacheTimeout) {
+			if (cacheTimeout > 0)
+				cachedMethods.put(method, cacheTimeout);
+			else
+				cachedMethods.remove(method);
+		}
+
+		/**
+		 * Resets the cache timeout for the specified method. If the method is annotated
+		 * with the {@link RMICached} annotation, it will be cached, not cached
+		 * otherwise.
+		 * 
+		 * @param method the remote method
+		 * @see RMICached
+		 * @see #getMethodCacheTimeout(Method)
+		 * @see #setMethodCached(Method, int)
+		 */
+		public void resetMethodCachedDefault(Method method) {
+			cachedMethods.remove(method);
+		}
+
+		/**
+		 * Get the exception class alternative to {@link RemoteException} for the
+		 * specified method.
+		 * 
+		 * @param method the remote method
+		 * @return the execption class that replaces the {@link RemoteException} on
+		 *         faults
+		 * @see RMIRemoteExceptionAlternative
+		 * @see #setMethodAlternativeRemoteException(Method, Class)
+		 * @see #resetMethodAlternativeRemoteException(Method)
+		 */
+		public Class<? extends Exception> getMethodAlternativeRemoteException(Method method) {
+			Class<? extends Exception> exceptionClass = alternativeRemoteExceptions.get(method);
+			if (exceptionClass == null && method.isAnnotationPresent(RMIRemoteExceptionAlternative.class))
+				exceptionClass = method.getAnnotation(RMIRemoteExceptionAlternative.class).value();
+			return exceptionClass;
+		}
+
+		/**
+		 * Set the exception class alternative to {@link RemoteException} for the
+		 * specified method.<br>
+		 * See {@link RMIRemoteExceptionAlternative} for more details.
+		 * 
+		 * @param method         the remote method
+		 * @param exceptionClass the alternative exception class
+		 * @see RMIRemoteExceptionAlternative
+		 * @see #getMethodAlternativeRemoteException(Method)
+		 * @see #resetMethodAlternativeRemoteException(Method)
+		 */
+		public void setMethodAlternativeRemoteException(Method method,
+				Class<? extends Exception> exceptionClass) {
+			alternativeRemoteExceptions.put(method, exceptionClass);
+		}
+
+		/**
+		 * Resets the alternative remote exception class for the specified method. If
+		 * the method is annotated with {@link RMIRemoteExceptionAlternative}, it will
+		 * throw the exception specified in the annotation, the {@link RemoteException}
+		 * otherwise.
+		 * 
+		 * @param method the remote method
+		 * @see RMIRemoteExceptionAlternative
+		 * @see #getMethodAlternativeRemoteException(Method)
+		 * @see #setMethodAlternativeRemoteException(Method, Class)
+		 */
+		public void resetMethodAlternativeRemoteException(Method method) {
+			alternativeRemoteExceptions.remove(method);
+		}
+	}
 
 	/**
 	 * Local Garbage Collector invoker service
@@ -746,7 +984,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return a new {@link RMIRegistry.Builder} instance
 	 */
-	public static Builder builder() { return new Builder(); }
+	public static Builder builder() {
+		return new Builder();
+	}
 
 	/**
 	 * Let the stubs to throw the specified exception alternatively to
@@ -755,7 +995,9 @@ public final class RMIRegistry {
 	 * @param exceptionClass the alternative exception class or null if the
 	 *                       {@link RemoteException} must not be replaced.
 	 */
-	public void replaceRemoteException(Class<Exception> exceptionClass) { remoteExceptionReplace = exceptionClass; }
+	public void replaceRemoteException(Class<Exception> exceptionClass) {
+		remoteExceptionReplace = exceptionClass;
+	}
 
 	/**
 	 * Gets the {@link RemoteException} replacing class set by invoking the
@@ -765,7 +1007,9 @@ public final class RMIRegistry {
 	 *         {@link RemoteException} or null if {@link RemoteException} is not
 	 *         currently replaced.
 	 */
-	public Class<Exception> getRemoteExceptionReplace() { return remoteExceptionReplace; }
+	public Class<Exception> getRemoteExceptionReplace() {
+		return remoteExceptionReplace;
+	}
 
 	/**
 	 * Gets the suppression state of the RMI faults.
@@ -773,7 +1017,9 @@ public final class RMIRegistry {
 	 * @return true if and only if all invocation faults are suppressed
 	 * @see Builder#suppressAllInvocationFaults(boolean)
 	 */
-	public boolean allInvocationFaultsSuppressed() { return suppressAllInvocationFaults; }
+	public boolean allInvocationFaultsSuppressed() {
+		return suppressAllInvocationFaults;
+	}
 
 	/**
 	 * Enables or disables multi-connection mode.
@@ -791,7 +1037,9 @@ public final class RMIRegistry {
 	 * @see #setMultiConnectionMode(boolean)
 	 * @return true if multi-connection mode is enabled, false otherwise
 	 */
-	public boolean isMultiConnectionMode() { return multiConnectionMode; }
+	public boolean isMultiConnectionMode() {
+		return multiConnectionMode;
+	}
 
 	/**
 	 * Gets the size of invocations cache for each skeleton.<br>
@@ -800,7 +1048,9 @@ public final class RMIRegistry {
 	 * @return the max number of invocation results that each skeleton stores in its
 	 *         cache
 	 */
-	public int getSkeletonInvocationCacheSize() { return skeletonInvocationCacheSize; }
+	public int getSkeletonInvocationCacheSize() {
+		return skeletonInvocationCacheSize;
+	}
 
 	/**
 	 * Gets the enabling status of the mechanism that guarantees the status
@@ -809,7 +1059,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return true if state consistency is guaranteed, false otherwise
 	 */
-	public boolean getStateConsistencyOnFaultEnabled() { return stateConsistencyOnFaultEnabled; }
+	public boolean getStateConsistencyOnFaultEnabled() {
+		return stateConsistencyOnFaultEnabled;
+	}
 
 	/**
 	 * Gets the {@link RMIHandler handler} maximum life used to simulate connection
@@ -818,7 +1070,9 @@ public final class RMIRegistry {
 	 * @return the maximum {@link RMIHandler handler} life before a connection
 	 *         failure is simulated, in milliseconds.
 	 */
-	public long getHandlerFaultMaxLife() { return handlerFaultMaxLife; }
+	public long getHandlerFaultMaxLife() {
+		return handlerFaultMaxLife;
+	}
 
 	/**
 	 * 
@@ -829,7 +1083,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return true if automatic referencing is enabled, false otherwise
 	 */
-	public boolean isAutomaticReferencingEnabled() { return automaticReferencing; }
+	public boolean isAutomaticReferencingEnabled() {
+		return automaticReferencing;
+	}
 
 	/**
 	 * Gets the class loader factory used by this registry to decode remote classes
@@ -837,7 +1093,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return the {@link ClassLoaderFactory} used by this registry
 	 */
-	public ClassLoaderFactory getClassLoaderFactory() { return classLoaderFactory; }
+	public ClassLoaderFactory getClassLoaderFactory() {
+		return classLoaderFactory;
+	}
 
 	/**
 	 * Gets the lease timeout after that the distributed garbage collection
@@ -845,7 +1103,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return the lease timeout value in milliseconds
 	 */
-	public int getLeaseTime() { return leaseTime; }
+	public int getLeaseTime() {
+		return leaseTime;
+	}
 
 	/**
 	 * Gets the estimate of the TCP connection latency time given by the developer.
@@ -857,7 +1117,9 @@ public final class RMIRegistry {
 	 * @see Builder#setLatencyTime(int)
 	 * @return the latency time in milliseconds
 	 */
-	public int getLatencyTime() { return latencyTime; }
+	public int getLatencyTime() {
+		return latencyTime;
+	}
 
 	/**
 	 * Sets an estimate of the TCP connection latency time. This constant is used to
@@ -869,7 +1131,9 @@ public final class RMIRegistry {
 	 * @see Builder#setLatencyTime(int)
 	 * @param latencyTime a time in milliseconds
 	 */
-	public void setLatencyTime(int latencyTime) { this.latencyTime = latencyTime; }
+	public void setLatencyTime(int latencyTime) {
+		this.latencyTime = latencyTime;
+	}
 
 	public void setCodeDownloadingEnabled(boolean codeMobilityEnabled) {
 		this.codeDownloadingEnabled = codeMobilityEnabled;
@@ -881,13 +1145,17 @@ public final class RMIRegistry {
 	 * @return true if this registry accepts code from remote codebases, false
 	 *         otherwise
 	 */
-	public boolean isCodeDownloadingEnabled() { return codeDownloadingEnabled; }
+	public boolean isCodeDownloadingEnabled() {
+		return codeDownloadingEnabled;
+	}
 
 	/**
 	 * Equinvalent to calling {@link RMIClassLoader#clearCodebasesSet()} on the
 	 * result of the method {@link #getRmiClassLoader()}.
 	 */
-	public void clearCodebasesSet() { getRmiClassLoader().clearCodebasesSet(); }
+	public void clearCodebasesSet() {
+		getRmiClassLoader().clearCodebasesSet();
+	}
 
 	/**
 	 * This will return all the static codebases and all the received codebases
@@ -895,7 +1163,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return all actually used codebases
 	 */
-	public Set<URL> getCodebases() { return getRmiClassLoader().getCodebasesSet(); }
+	public Set<URL> getCodebases() {
+		return getRmiClassLoader().getCodebasesSet();
+	}
 
 	/**
 	 * Add new static codebases that will be sent to the other machines.
@@ -976,7 +1246,9 @@ public final class RMIRegistry {
 	 * @see #addCodebase(URL)
 	 * @param url the URL of the codebase
 	 */
-	public void removeCodebase(URL url) { getRmiClassLoader().removeCodebase(url); }
+	public void removeCodebase(URL url) {
+		getRmiClassLoader().removeCodebase(url);
+	}
 
 	/**
 	 * Returns the {@link RMIClassLoader} instance used to load classes from remote
@@ -985,7 +1257,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return the {@link RMIClassLoader} instance used by this registry
 	 */
-	public RMIClassLoader getRmiClassLoader() { return rmiClassLoader; }
+	public RMIClassLoader getRmiClassLoader() {
+		return rmiClassLoader;
+	}
 
 	/**
 	 * Adds authentication details for a remote host
@@ -1028,7 +1302,9 @@ public final class RMIRegistry {
 	 * Finalizes this registry instance and all its current open connections.
 	 */
 	@Override
-	public void finalize() { finalize(true); }
+	public void finalize() {
+		finalize(true);
+	}
 
 	/**
 	 * Finalizes this registry instance and all its current open connections.
@@ -1320,14 +1596,18 @@ public final class RMIRegistry {
 	 * 
 	 * @return The last listener TCP port
 	 */
-	public int getListenerPort() { return listenerPort; }
+	public int getListenerPort() {
+		return listenerPort;
+	}
 
 	/**
 	 * Gets the rmiAuthenticator of this registry
 	 * 
 	 * @return the rmiAuthenticator associated to this registry
 	 */
-	public RMIAuthenticator getAuthenticator() { return rmiAuthenticator; }
+	public RMIAuthenticator getAuthenticator() {
+		return rmiAuthenticator;
+	}
 
 	/**
 	 * Publish the given object respect to the specified interface.
@@ -1759,7 +2039,9 @@ public final class RMIRegistry {
 	 * 
 	 * @return the registry key
 	 */
-	String getRegistryKey() { return registryKey; }
+	String getRegistryKey() {
+		return registryKey;
+	}
 
 	/**
 	 * Package-level method to get authentication relative to a remote process.
@@ -1802,12 +2084,25 @@ public final class RMIRegistry {
 	 * 
 	 * @return the skeletonById map
 	 */
-	Map<String, Skeleton> getSkeletonByIdMap() { return skeletonById; }
+	Map<String, Skeleton> getSkeletonByIdMap() {
+		return skeletonById;
+	}
 
 	/**
 	 * Package-scoped. Gets the map (object => skeleton)
 	 * 
 	 * @return the skeletonByObject map
 	 */
-	Map<Object, Skeleton> getSkeletonByObjectMap() { return skeletonByObject; }
+	Map<Object, Skeleton> getSkeletonByObjectMap() {
+		return skeletonByObject;
+	}
+
+	/**
+	 * Gets the {@link MethodAnnotationRegistry} instance bound to this registry.
+	 * 
+	 * @return a {@link MethodAnnotationRegistry} instance
+	 */
+	public MethodAnnotationRegistry getMethodAnnotationRegistry() {
+		return methodAnnotationRegistry;
+	}
 }

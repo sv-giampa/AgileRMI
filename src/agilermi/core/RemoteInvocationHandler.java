@@ -32,10 +32,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import agilermi.configuration.annotation.RMIAsynch;
-import agilermi.configuration.annotation.RMICached;
-import agilermi.configuration.annotation.RMIRemoteExceptionAlternative;
-import agilermi.configuration.annotation.RMISuppressFaults;
+import agilermi.core.RMIRegistry.MethodAnnotationRegistry;
 import agilermi.exception.LocalAuthenticationException;
 import agilermi.exception.RemoteException;
 
@@ -165,7 +162,10 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			if (handler == null || handler.isDisposed())
 				return;
 			try {
-				if (!messageSent) { handler.putMessage(invocation); messageSent = true; }
+				if (!messageSent) {
+					handler.putMessage(invocation);
+					messageSent = true;
+				}
 				if (isInterrupted && !interruptionSent) {
 					handler.putMessage(new InterruptionMessage(invocation.id));
 					interruptionSent = true;
@@ -181,11 +181,17 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			Thread.currentThread().interrupt();
 	}
 
-	String getObjectId() { return objectId; }
+	String getObjectId() {
+		return objectId;
+	}
 
-	String getHost() { return host; }
+	String getHost() {
+		return host;
+	}
 
-	int getPort() { return port; }
+	int getPort() {
+		return port;
+	}
 
 	RMIHandler getHandler() {
 		if (handler == null)
@@ -226,16 +232,20 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-		boolean isAsynch = method.isAnnotationPresent(RMIAsynch.class) && method.getReturnType() == void.class;
-		boolean isCached = method.isAnnotationPresent(RMICached.class) && method.getParameterTypes().length == 0;
-		boolean suppressFaults = method.isAnnotationPresent(RMISuppressFaults.class);
-		boolean remoteExceptionReplace = method.isAnnotationPresent(RMIRemoteExceptionAlternative.class);
+		MethodAnnotationRegistry methodAnnotationRegistry = registry.getMethodAnnotationRegistry();
+		boolean isAsynch = methodAnnotationRegistry.isMethodAsynch(method);
+		boolean isCached = methodAnnotationRegistry.getMethodCacheTimeout(method) > 0;
+		boolean suppressFaults = methodAnnotationRegistry.isMethodSuppressingFaults(method);
+		boolean remoteExceptionReplace = methodAnnotationRegistry.getMethodAlternativeRemoteException(method) != null;
 
 		if (isCached) {
 			synchronized (cache) {
 				if (cache.containsKey(method)) {
 					RMICache rmiCache = cache.get(method);
-					if (System.currentTimeMillis() < rmiCache.time) { updateLastUse(); return rmiCache.result; }
+					if (System.currentTimeMillis() < rmiCache.time) {
+						updateLastUse();
+						return rmiCache.result;
+					}
 				}
 			}
 		}
@@ -325,7 +335,6 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			if (methodName.equals("toString") && parameterTypes.length == 0)
 				return "[broken remote reference " + objectId + "@" + host + ":" + port + "]";
 		} else if (isCached) {
-			RMICached cached = method.getAnnotation(RMICached.class);
 			RMICache rmiCache;
 			synchronized (cache) {
 				if (cache.containsKey(method)) {
@@ -335,7 +344,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 					cache.put(method, rmiCache);
 				}
 				rmiCache.result = invocation.returnValue;
-				rmiCache.time = System.currentTimeMillis() + cached.timeout();
+				rmiCache.time = System.currentTimeMillis() + methodAnnotationRegistry.getMethodCacheTimeout(method);
 			}
 		}
 
@@ -348,7 +357,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 				if (!(suppressFaults || registry.allInvocationFaultsSuppressed())) {
 					if (remoteExceptionReplace || registry.getRemoteExceptionReplace() != null) {
 						Class<? extends Exception> exceptionClass = (remoteExceptionReplace)
-								? method.getAnnotation(RMIRemoteExceptionAlternative.class).value()
+								? methodAnnotationRegistry.getMethodAlternativeRemoteException(method)
 								: registry.getRemoteExceptionReplace();
 
 						Exception e = exceptionClass.newInstance();
@@ -364,22 +373,6 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			} else {
 				throw invocation.thrownException;
 			}
-
-//			boolean throwException = !(invocation.thrownException instanceof RemoteException &&
-//					(suppressFaults || registry.allInvocationFaultsSuppressed()));
-//
-//			if (throwException) {
-//				if (rmiRemoteException) {
-//					Class<? extends Exception> exceptionClass = method
-//							.getAnnotation(RMIRemoteExceptionAlternative.class).value();
-//					Exception e = exceptionClass.newInstance();
-//					virtualiseStackTrace(invocation.thrownException);
-//					e.initCause(invocation.thrownException);
-//					throw e;
-//				}
-//				virtualiseStackTrace(invocation.thrownException);
-//				throw invocation.thrownException;
-//			}
 
 		} else if (hashCodeCall) {
 			// cache hashCode for next non-deliverable invocations
