@@ -434,7 +434,10 @@ public final class RMIRegistry {
 		@Override
 		public void run() {
 			try {
-				while (!isInterrupted()) { Thread.sleep(latencyTime); System.gc(); }
+				while (!isInterrupted()) {
+					Thread.sleep(latencyTime);
+					System.gc();
+				}
 			} catch (InterruptedException e) {}
 		}
 	}
@@ -1391,6 +1394,8 @@ public final class RMIRegistry {
 	public Object getStub(String address, int port, String objectId, Class<?>... stubInterfaces) {
 		if (finalized)
 			throw new IllegalStateException("this registry has been finalized");
+		if (stubInterfaces.length == 0)
+			throw new IllegalArgumentException("No interface has been passed");
 		return Proxy
 				.newProxyInstance(stubInterfaces[0].getClassLoader(), stubInterfaces,
 						new RemoteInvocationHandler(this, address, port, objectId));
@@ -1520,7 +1525,9 @@ public final class RMIRegistry {
 				if (!handlers.containsKey(inetAddress))
 					return null;
 				List<RMIHandler> rmiHandlers = handlers.get(inetAddress);
-				for (RMIHandler hnd : rmiHandlers) { hnd.dispose(signalFault); }
+				for (RMIHandler hnd : rmiHandlers) {
+					hnd.dispose(signalFault);
+				}
 			}
 			return null;
 		};

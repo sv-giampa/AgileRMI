@@ -117,8 +117,10 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 			if (handler == null)
 				handler = registry.getRMIHandler(host, port);
 
-			handler.registerStub(this);
+			handler.putMessage(new RemoteInterfaceMessage(objectId));
 			handler.putMessage(new NewReferenceMessage(objectId));
+
+			handler.registerStub(this);
 			remoteRegistryKey = handler.getRemoteRegistryKey();
 		} catch (Exception e) {
 			handler = null;
@@ -140,7 +142,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		}
 
 		// add RMI stack trace element
-		newStackList.add(new StackTraceElement("=====> Remote Method Invocation ======>", "", "", -1));
+		newStackList.add(new StackTraceElement("=====> Remote Method Invocation =====>", "", "", -1));
 
 		// add local part of stack trace
 		for (int i = 2; i < localStack.length; i++) {
@@ -202,25 +204,21 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 	}
 
 	public RemoteInvocationHandler(RMIRegistry rmiRegistry, String host, int port, String objectId) {
-		this.objectId = objectId;
 		this.registry = rmiRegistry;
-
 		this.host = host;
 		this.port = port;
-
-		try {
-			findHandler();
-		} catch (Exception e) {}
-
+		this.objectId = objectId;
 	}
 
 	public RemoteInvocationHandler(RMIHandler handler, String objectId) {
-		this.objectId = objectId;
 		this.handler = handler;
+		this.remoteRegistryKey = handler.getRemoteRegistryKey();
+		this.handler.registerStub(this);
+
+		this.objectId = objectId;
 		this.registry = handler.getRMIRegistry();
 		this.host = handler.getInetSocketAddress().getHostString();
 		this.port = handler.getInetSocketAddress().getPort();
-		this.remoteRegistryKey = handler.getRemoteRegistryKey();
 	}
 
 	private void updateLastUse() {
@@ -289,6 +287,17 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 		final int RETRIES = 2;
 		boolean success = false;
 		for (int i = 0; i < RETRIES && !success; i++) {
+			if (Debug.INVOCATION_HANDLERS) {
+				System.out.println(RemoteInvocationHandler.class.getName() + " just before invoocation");
+				System.out
+						.println(
+								RemoteInvocationHandler.class.getName() + " handler==null? "
+										+ (handler == null));
+				System.out
+						.println(RemoteInvocationHandler.class.getName() + " handler.isDisposed()? "
+								+ handler.isDisposed());
+				System.out.println(RemoteInvocationHandler.class.getName() + " invoking...");
+			}
 			invoke(invocation);
 
 			if (i < RETRIES - 1 && (handler == null || handler.isDisposed())) {
@@ -364,8 +373,7 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 						e.initCause(invocation.thrownException);
 						invocation.thrownException = e;
 					} else if (!Arrays.asList(method.getExceptionTypes()).contains(RemoteException.class)) {
-						Exception e = RuntimeException.class.newInstance();
-						e.initCause(invocation.thrownException);
+						Exception e = new RuntimeException(invocation.thrownException);
 						invocation.thrownException = e;
 					}
 					throw invocation.thrownException;
@@ -418,7 +426,9 @@ class RemoteInvocationHandler implements InvocationHandler, Serializable {
 				return Boolean.valueOf(false);
 			else if (Character.class.isAssignableFrom(returnType))
 				return Character.valueOf((char) 0);
-			else if (returnType.isArray()) { return Array.newInstance(returnType.getComponentType(), 0); }
+			else if (returnType.isArray()) {
+				return Array.newInstance(returnType.getComponentType(), 0);
+			}
 		}
 
 		return invocation.returnValue;
