@@ -144,6 +144,7 @@ class CodebaseUpdateMessage implements RMIMessage {
 class InvocationMessage implements RMIMessage {
 	private static final long serialVersionUID = 992296041709440752L;
 
+	private static Object lock = new Object();
 	private static long nextId = 0;
 
 	// invocation identifier, re-sent back in the related invocation response,
@@ -199,7 +200,9 @@ class InvocationMessage implements RMIMessage {
 	 */
 	public InvocationMessage(String objectId, String method, Class<?>[] parameterTypes, Object[] parameters,
 			boolean asynch) {
-		id = nextId++;
+		synchronized (lock) {
+			id = nextId++;
+		}
 		this.objectId = objectId;
 		this.method = method;
 		this.parameterTypes = parameterTypes;
@@ -251,8 +254,7 @@ class ReturnMessage implements RMIMessage {
 	public Object returnValue;
 	public Throwable thrownException;
 
-	public ReturnMessage() {
-	}
+	public ReturnMessage() {}
 
 	public ReturnMessage(long invocationId, Class<?> returnClass, Object returnValue, Throwable thrownException) {
 		this.invocationId = invocationId;
